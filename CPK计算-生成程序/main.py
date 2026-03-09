@@ -6,6 +6,8 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from scipy.stats import norm
 import ctypes
 import re
+import json
+import os
 
 # ==========================================
 # 1. 高分屏适配 (HiDPI)
@@ -27,7 +29,7 @@ plt.rcParams['figure.dpi'] = 100 * ScaleFactor
 THEME = {
     'bg': '#1e1e1e', 'panel': '#252526', 'fg': '#cccccc',
     'accent': '#007acc', 'input_bg': '#3c3c3c', 'success': '#4ec9b0',
-    'danger': '#f44747', 'border': '#444444'
+    'danger': '#f44747', 'border': '#444444', 'warning': '#ffcc00'
 }
 
 # ==========================================
@@ -50,6 +52,8 @@ class CpkCalculator:
         cp = None
         cpk = None
         ppm = 0
+        cpu = None
+        cpl = None
         
         # --- 情况 A: 双边规格 (USL 和 LSL 都有) ---
         if usl is not None and lsl is not None:
@@ -64,14 +68,16 @@ class CpkCalculator:
             
         # --- 情况 B: 只有上限 (USL) ---
         elif usl is not None and lsl is None:
-            cpk = (usl - mu) / (3 * sigma) # 即 Cpu
+            cpu = (usl - mu) / (3 * sigma) # 即 Cpu
+            cpk = cpu
             cp = None # 单边无法计算 Cp
             p_upper = 1 - norm.cdf(usl, mu, sigma)
             ppm = p_upper * 1_000_000
             
         # --- 情况 C: 只有下限 (LSL) ---
         elif lsl is not None and usl is None:
-            cpk = (mu - lsl) / (3 * sigma) # 即 Cpl
+            cpl = (mu - lsl) / (3 * sigma) # 即 Cpl
+            cpk = cpl
             cp = None
             p_lower = norm.cdf(lsl, mu, sigma)
             ppm = p_lower * 1_000_000
@@ -79,9 +85,24 @@ class CpkCalculator:
         else:
             return {"Error": "请至少输入一个规格限 (USL 或 LSL)"}
 
+        # CPK等级评估
+        cpk_level = ""
+        if cpk is not None:
+            if cpk >= 1.67:
+                cpk_level = "优秀 (Excellent)"
+            elif cpk >= 1.33:
+                cpk_level = "良好 (Good)"
+            elif cpk >= 1.0:
+                cpk_level = "一般 (Adequate)"
+            elif cpk >= 0.67:
+                cpk_level = "较差 (Poor)"
+            else:
+                cpk_level = "很差 (Inadequate)"
+
         return {
             "Count": n, "Mean": mu, "StdDev": sigma,
-            "USL": usl, "LSL": lsl, "Cp": cp, "Cpk": cpk, "PPM": ppm
+            "USL": usl, "LSL": lsl, "Cp": cp, "Cpk": cpk, "PPM": ppm,
+            "CPU": cpu, "CPL": cpl, "CPK_LEVEL": cpk_level
         }
 
     @staticmethod
@@ -193,8 +214,8 @@ class CpkApp:
     def __init__(self, root):
         self.root = root
         self.root.title("CPK Tool Pro - One Sided Support")
-        # 增加整体宽度以适应更宽的左侧
-        self.root.geometry(f"{int(1450)}x{int(820)}") 
+        # 增加整体宽度以适应更宽的右侧
+        self.root.geometry(f"{int(1700)}x{int(820)}") 
         self.root.configure(bg=THEME['bg'])
         self.setup_ui()
 
@@ -208,12 +229,12 @@ class CpkApp:
         main = tk.Frame(self.root, bg=THEME['bg'])
         main.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        # === 布局调整：左侧加宽到 460 ===
+        # === 布局调整：左侧 460，右侧 350，中间自动填充 ===
         left = tk.Frame(main, bg=THEME['panel'], width=460)
         left.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 5))
         left.pack_propagate(False)
 
-        right = tk.Frame(main, bg=THEME['panel'], width=260)
+        right = tk.Frame(main, bg=THEME['panel'], width=350)  # 增加右侧宽度
         right.pack(side=tk.RIGHT, fill=tk.Y, padx=(5, 0))
         right.pack_propagate(False)
         
@@ -242,15 +263,19 @@ class CpkApp:
     def init_stats_panel(self, parent):
         tk.Label(parent, text="📊 结果汇总", bg=THEME['panel'], fg=THEME['accent'], font=("Segoe UI", 14, "bold")).pack(pady=20)
         self.stat_labels = {}
+        
         # 格式配置：如果 fmt 为 None，说明需要特殊处理（比如 Cp 可能为 N/A）
         fields = [
             ("Count", "样本数 N"), ("Mean", "均值 Mean"), ("StdDev", "标准差 Std"),
             (None, None),
             ("USL", "规格上限"), ("LSL", "规格下限"),
             (None, None),
-            ("Cp", "Cp (精密度)"), ("Cpk", "Cpk (能力)"), ("PPM", "不良率 PPM")
+            ("Cp", "Cp (精密度)"), ("Cpk", "Cpk (能力)"), ("CPK_LEVEL", "Cpk等级"),
+            (None, None),
+            ("CPU", "CPU (上限能力)"), ("CPL", "CPL (下限能力)"), ("PPM", "不良率 PPM")
         ]
         
+        # 创建表格框架，设置更大的宽度
         tbl = tk.Frame(parent, bg=THEME['panel'])
         tbl.pack(fill=tk.X, padx=20)
         
@@ -258,10 +283,13 @@ class CpkApp:
             if key is None:
                 tk.Frame(tbl, bg=THEME['border'], height=1).grid(row=i, column=0, columnspan=2, sticky='ew', pady=8)
             else:
-                tk.Label(tbl, text=label, bg=THEME['panel'], fg='#888', anchor='w').grid(row=i, column=0, sticky='w')
-                val = tk.Label(tbl, text="-", bg=THEME['panel'], fg='white', font=("Consolas", 11, "bold"))
-                val.grid(row=i, column=1, sticky='e')
+                # 左侧标签，设置固定宽度
+                tk.Label(tbl, text=label, bg=THEME['panel'], fg='#888', anchor='w', width=15).grid(row=i, column=0, sticky='w', padx=(0, 5))
+                # 右侧数值，设置更大的宽度
+                val = tk.Label(tbl, text="-", bg=THEME['panel'], fg='white', font=("Consolas", 11, "bold"), anchor='w', width=20)
+                val.grid(row=i, column=1, sticky='ew')
                 self.stat_labels[key] = val
+        # 配置列权重以允许扩展
         tbl.columnconfigure(1, weight=1)
 
     def update_stats_display(self, stats):
@@ -274,10 +302,24 @@ class CpkApp:
                 val = stats[key]
                 if key == "Count": txt = f"{int(val)}"
                 elif key == "PPM": txt = f"{int(val)}"
+                elif key == "CPK_LEVEL": txt = f"{val}"
                 elif key in ["USL", "LSL"] and val is None: txt = "Not Set"
-                else: txt = fmt_val(val, 3 if key in ['Cp', 'Cpk'] else 4)
+                else: txt = fmt_val(val, 3 if key in ['Cp', 'Cpk', 'CPU', 'CPL'] else 4)
                 
-                lbl.config(text=txt, fg=THEME['success'] if val is not None else '#666')
+                # 设置颜色
+                if key == "CPK_LEVEL":
+                    level_colors = {
+                        "优秀 (Excellent)": THEME['success'],
+                        "良好 (Good)": "#aaff00",
+                        "一般 (Adequate)": THEME['warning'],
+                        "较差 (Poor)": "#ffaa00",
+                        "很差 (Inadequate)": THEME['danger']
+                    }
+                    color = level_colors.get(val, 'white')
+                else:
+                    color = THEME['success'] if val is not None else '#666'
+                
+                lbl.config(text=txt, fg=color)
 
     def init_chart_panel(self, parent):
         self.fig, self.ax = plt.subplots(figsize=(5, 5))
@@ -291,6 +333,16 @@ class CpkApp:
         e = tk.Entry(parent, bg=THEME['input_bg'], fg='white', insertbackground='white', relief=tk.FLAT, font=('Consolas', 11))
         if default: e.insert(0, default)
         e.grid(row=row, column=1, sticky='ew', padx=10, pady=8)
+        return e
+
+    def create_input_with_unit(self, parent, label, unit, row, default=""):
+        frame = tk.Frame(parent, bg=THEME['panel'])
+        frame.grid(row=row, column=0, columnspan=2, sticky='ew', pady=8)
+        tk.Label(frame, text=label, bg=THEME['panel'], fg=THEME['fg']).pack(side=tk.LEFT)
+        e = tk.Entry(frame, bg=THEME['input_bg'], fg='white', insertbackground='white', relief=tk.FLAT, font=('Consolas', 11))
+        if default: e.insert(0, default)
+        e.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 0))
+        tk.Label(frame, text=unit, bg=THEME['panel'], fg=THEME['fg']).pack(side=tk.LEFT, padx=(5, 0))
         return e
 
     # === Tab 1: 分析 ===
@@ -445,6 +497,10 @@ class CpkApp:
             self.ax.axvline(lsl, c=THEME['danger'], ls='--', lw=1.5)
             self.ax.text(lsl, ymax*0.95, "LSL", c=THEME['danger'], ha='center')
         
+        # 添加均值线
+        self.ax.axvline(mu, c=THEME['warning'], ls='-', lw=1.5, alpha=0.7)
+        self.ax.text(mu, ymax*0.85, f"Mean: {mu:.3f}", c=THEME['warning'], ha='center')
+        
         # 去除边框
         self.ax.spines['top'].set_visible(False)
         self.ax.spines['right'].set_visible(False)
@@ -456,7 +512,7 @@ class CpkApp:
 
     def reset_chart(self):
         self.ax.clear(); self.ax.axis('off')
-        self.ax.text(0.5, 0.5, "Waiting...", color='#555', ha='center', transform=self.ax.transAxes)
+        self.ax.text(0.5, 0.5, "等待数据...", color='#555', ha='center', transform=self.ax.transAxes)
         self.canvas.draw()
         for k, l in self.stat_labels.items(): l.config(text="-", fg='white')
 
@@ -465,12 +521,12 @@ class CpkApp:
         self.txt_data.delete("1.0", tk.END); self.reset_chart()
 
     def on_clear_tab2(self):
-        for e in [self.inp_sim_usl, self.inp_sim_lsl, self.inp_sim_cpk, self.inp_sim_mean, self.inp_sim_cnt]: e.delete(0, tk.END)
+        for e in [self.inp_sim_usl, self.inp_sim_lsl, self.inp_sim_cpk, self.inp_sim_mean, self.inp_sim_cnt, self.inp_sim_prec]: e.delete(0, tk.END)
         self.txt_sim.delete("1.0", tk.END); self.reset_chart()
 
     def on_copy(self):
         self.root.clipboard_clear(); self.root.clipboard_append(self.txt_sim.get("1.0", tk.END))
-        DarkMessageBox(self.root, "复制成功", "内容已复制", False)
+        DarkMessageBox(self.root, "复制成功", "内容已复制到剪贴板", False)
 
     def add_about_link(self):
         """在窗口右下角添加关于链接"""
@@ -487,18 +543,26 @@ class CpkApp:
 
     def show_about(self):
         """显示使用条款和版权声明"""
-        import os
-        txt_path = r"D:\OneDrive\Person\OneDrive\Application\CODE\CPK计算-生成程序\新建 文本文档.txt"
+        about_text = """
+CPK统计分析工具 V2.0
 
-        try:
-            if os.path.exists(txt_path):
-                with open(txt_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                DarkMessageBox(self.root, "关于软件", content, is_error=False)
-            else:
-                DarkMessageBox(self.root, "错误", "未找到使用条款文件", is_error=True)
-        except Exception as e:
-            DarkMessageBox(self.root, "错误", f"读取文件失败：{str(e)}", is_error=True)
+功能特性：
+• 支持双边和单边规格限制的CPK计算
+• 提供数据模拟生成功能
+• 深色主题界面，美观易用
+• 实时图表显示分布情况
+• 支持多种统计指标显示
+
+使用说明：
+• 在数据分析标签页中输入规格限和测量数据
+• 在模拟生成标签页中设置目标参数生成数据
+• 结果面板显示详细的统计信息
+
+作者：CPK分析团队
+版本：2.0
+日期：2024年
+        """
+        DarkMessageBox(self.root, "关于软件", about_text, is_error=False)
 
 if __name__ == "__main__":
     root = tk.Tk()
