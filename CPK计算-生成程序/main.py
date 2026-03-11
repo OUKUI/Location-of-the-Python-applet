@@ -3,7 +3,7 @@ from tkinter import ttk, filedialog, messagebox
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from scipy.stats import norm
+from scipy.stats import norm, skew, kurtosis
 import ctypes
 import re
 import os
@@ -56,7 +56,7 @@ THEME = {
 }
 
 # ==========================================
-# 3. 核心计算 (新增 Max/Min)
+# 3. 核心计算
 # ==========================================
 class CpkCalculator:
     @staticmethod
@@ -69,13 +69,18 @@ class CpkCalculator:
         sigma = np.std(data, ddof=1)
         data_min = np.min(data)
         data_max = np.max(data)
+        data_range = data_max - data_min
+        data_median = np.median(data)
+        
+        data_skew = skew(data)
+        data_kurt = kurtosis(data)
+        cv = (sigma / abs(mu)) * 100 if mu != 0 else 0.0
 
         if sigma <= 1e-9:
             return {"Error": "标准差为 0，无法计算"}
 
         cp = None; cpk = None; ppm = 0; cpu = None; cpl = None
         
-        # 计算超出边界的样本数量
         out_of_spec_count = 0
         if usl is not None:
             out_of_spec_count += np.sum(data > usl)
@@ -88,15 +93,21 @@ class CpkCalculator:
             cpl = (mu - lsl) / (3 * sigma)
             cpk = min(cpu, cpl)
             cp = (usl - lsl) / (6 * sigma)
+            
             p_upper = 1 - norm.cdf(usl, mu, sigma)
             p_lower = norm.cdf(lsl, mu, sigma)
             ppm = (p_upper + p_lower) * 1_000_000
+            
+            sigma_level = 3 * cpk 
+
         elif usl is not None:
             cpu = (usl - mu) / (3 * sigma); cpk = cpu; cp = None
             ppm = (1 - norm.cdf(usl, mu, sigma)) * 1_000_000
+            sigma_level = 3 * cpk
         elif lsl is not None:
             cpl = (mu - lsl) / (3 * sigma); cpk = cpl; cp = None
             ppm = norm.cdf(lsl, mu, sigma) * 1_000_000
+            sigma_level = 3 * cpk
         else:
             return {"Error": "请至少输入一个规格限"}
 
@@ -109,11 +120,23 @@ class CpkCalculator:
             else: cpk_level = "很差"
 
         return {
-            "Count": n, "Mean": mu, "StdDev": sigma,
-            "USL": usl, "LSL": lsl, "Cp": cp, "Cpk": cpk, "PPM": ppm,
-            "CPU": cpu, "CPL": cpl, "CPK_LEVEL": cpk_level,
+            "Count": n, 
+            "Mean": mu, 
+            "StdDev": sigma,
+            "Max": data_max, 
+            "Min": data_min,
+            "Range": data_range,
+            "Median": data_median,
+            "Skewness": data_skew,
+            "Kurtosis": data_kurt,
+            "CV": cv,
+            "USL": usl, "LSL": lsl, 
+            "Cp": cp, "Cpk": cpk, 
+            "PPM": ppm,
+            "CPU": cpu, "CPL": cpl, 
+            "CPK_LEVEL": cpk_level,
             "OutOfSpecCount": int(out_of_spec_count),
-            "Max": data_max, "Min": data_min  # 新增最大值和最小值
+            "SigmaLevel": sigma_level if 'sigma_level' in locals() else 0
         }
 
     @staticmethod
@@ -173,9 +196,12 @@ class DarkMessageBox(tk.Toplevel):
 class CpkApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("CPK Tool Pro - Merge to Single PDF")
+        self.root.title("CPK 统计分析工具 Pro (紧凑单页版)")
         self.root.geometry(f"{int(1700)}x{int(850)}") 
         self.root.configure(bg=THEME['bg'])
+
+        # 获取软件所在目录
+        self.app_dir = os.path.dirname(os.path.abspath(__file__))
 
         self.current_data = None
         self.current_stats = None
@@ -215,12 +241,11 @@ class CpkApp:
         main = tk.Frame(self.root, bg=THEME['bg'])
         main.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        # 【修改点 3】左侧面板宽度调整为 1.25 倍 (460 * 1.25 = 575)
         left = tk.Frame(main, bg=THEME['panel'], width=575)
         left.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 5))
         left.pack_propagate(False)
 
-        right = tk.Frame(main, bg=THEME['panel'], width=350)
+        right = tk.Frame(main, bg=THEME['panel'], width=380)
         right.pack(side=tk.RIGHT, fill=tk.Y, padx=(5, 0))
         right.pack_propagate(False)
 
@@ -237,7 +262,7 @@ class CpkApp:
 
         proj_frame = tk.Frame(parent, bg=THEME['panel'])
         proj_frame.pack(fill=tk.X, padx=15, pady=(0, 10))
-        tk.Label(proj_frame, text="📁 项目名称 (手动/模拟):", bg=THEME['panel'], fg=THEME['warning'], font=('Microsoft YaHei', 9, 'bold')).pack(anchor='w')
+        tk.Label(proj_frame, text="📁 项目名称:", bg=THEME['panel'], fg=THEME['warning'], font=('Microsoft YaHei', 9, 'bold')).pack(anchor='w')
         self.inp_project = tk.Entry(proj_frame, bg=THEME['input_bg'], fg='white', insertbackground='white', 
                                     relief=tk.FLAT, font=('Microsoft YaHei', 10))
         self.inp_project.pack(fill=tk.X, ipady=5, pady=(5,0))
@@ -297,35 +322,46 @@ class CpkApp:
     def init_stats_panel(self, parent):
         self.lbl_proj_display = tk.Label(parent, text="项目：未命名", bg=THEME['panel'], fg=THEME['accent'], font=("Segoe UI", 12, "bold"))
         self.lbl_proj_display.pack(pady=(15, 5))
-        tk.Label(parent, text="📊 结果汇总", bg=THEME['panel'], fg='white', font=("Segoe UI", 14, "bold")).pack(pady=5)
+        tk.Label(parent, text="📊 详细质量指标", bg=THEME['panel'], fg='white', font=("Segoe UI", 14, "bold")).pack(pady=5)
 
         self.stat_labels = {}
-        # 【修改点 2】在统计字段中增加 Max 和 Min
         fields = [
-            ("Count", "样本数 N"), ("Mean", "均值 Mean"), ("StdDev", "标准差 Std"),
-            ("Max", "最大值 Max"), ("Min", "最小值 Min"), # 新增
+            ("Count", "样本数 N"), ("Mean", "均值"), ("StdDev", "标准差"),
+            ("Median", "中位数"), ("CV", "变异系数%"),
+            (None, None),
+            ("Max", "最大值"), ("Min", "最小值"), ("Range", "极差"),
+            ("Skewness", "偏度"), ("Kurtosis", "峰度"),
             (None, None),
             ("USL", "规格上限"), ("LSL", "规格下限"),
             (None, None),
-            ("Cp", "Cp"), ("Cpk", "Cpk"), ("CPK_LEVEL", "等级"),
+            ("Cp", "Cp"), ("Cpk", "Cpk"), ("SigmaLevel", "Sigma水平"),
+            ("CPK_LEVEL", "等级"), ("PPM", "PPM"),
             (None, None),
-            ("CPU", "CPU"), ("CPL", "CPL"), ("PPM", "PPM"),
-            ("OutOfSpecCount", "超规样本数")
+            ("OutOfSpecCount", "超规数")
         ]
 
         tbl = tk.Frame(parent, bg=THEME['panel'])
-        tbl.pack(fill=tk.X, padx=20)
+        tbl.pack(fill=tk.X, padx=10)
 
+        current_row = 0
+        col_idx = 0
         for i, (key, label) in enumerate(fields):
             if key is None:
-                tk.Frame(tbl, bg=THEME['border'], height=1).grid(row=i, column=0, columnspan=2, sticky='ew', pady=8)
+                tk.Frame(tbl, bg=THEME['border'], height=1).grid(row=current_row, column=0, columnspan=4, sticky='ew', pady=6)
+                current_row += 1
             else:
-                tk.Label(tbl, text=label, bg=THEME['panel'], fg='#888', anchor='w', width=12).grid(row=i, column=0, sticky='w', padx=(0, 5))
-                val = tk.Label(tbl, text="-", bg=THEME['panel'], fg='white', font=("Consolas", 11, "bold"), anchor='w', width=18)
-                val.grid(row=i, column=1, sticky='ew')
+                tk.Label(tbl, text=label, bg=THEME['panel'], fg='#888', anchor='e', width=10, font=('Microsoft YaHei', 8)).grid(row=current_row, column=col_idx*2, sticky='e', padx=(5, 2), pady=2)
+                val = tk.Label(tbl, text="-", bg=THEME['panel'], fg='white', font=("Consolas", 10, "bold"), anchor='w', width=12)
+                val.grid(row=current_row, column=col_idx*2 + 1, sticky='w', padx=(2, 10), pady=2)
                 self.stat_labels[key] = val
+                
+                col_idx += 1
+                if col_idx >= 2:
+                    col_idx = 0
+                    current_row += 1
         
-        tbl.columnconfigure(1, weight=1)
+        for c in range(4):
+            tbl.columnconfigure(c, weight=1)
 
     def update_stats_display(self, stats, project_name=None):
         if project_name:
@@ -344,15 +380,21 @@ class CpkApp:
         for key, lbl in self.stat_labels.items():
             if key in stats:
                 val = stats[key]
+                txt = ""
                 if key in ["Count", "OutOfSpecCount"]: txt = f"{int(val)}"
                 elif key == "PPM": txt = f"{int(val)}"
                 elif key == "CPK_LEVEL": txt = f"{val}"
-                elif key in ["USL", "LSL"] and val is None: txt = "Not Set"
+                elif key == "SigmaLevel": txt = f"{val:.2f}σ"
+                elif key == "CV": txt = f"{val:.2f}%"
+                elif key in ["USL", "LSL"] and val is None: txt = "未设置"
+                elif key in ["Skewness", "Kurtosis"]: txt = fmt_val(val, 3)
                 else: txt = fmt_val(val, 3 if key in ['Cp', 'Cpk', 'CPU', 'CPL'] else 4)
 
                 if key == "CPK_LEVEL":
                     level_colors = {"优秀": THEME['success'], "良好": "#aaff00", "一般": THEME['warning'], "较差": "#ffaa00", "很差": THEME['danger']}
                     color = level_colors.get(val, 'white')
+                elif key in ["Skewness", "Kurtosis"]:
+                    color = THEME['warning'] if abs(val) > 1.0 else THEME['success']
                 else:
                     color = THEME['success'] if val is not None else '#666'
                 
@@ -381,7 +423,6 @@ class CpkApp:
         self.inp_an_usl = self.create_input(inner, "上限 (USL)", 1)
         self.inp_an_lsl = self.create_input(inner, "下限 (LSL)", 2)
         tk.Label(inner, text="测量数据:", bg=THEME['panel'], fg=THEME['fg']).grid(row=3, column=0, sticky='w', pady=(20, 5))
-        # 宽度随父容器自动适应，因为父容器变宽了
         self.txt_data = tk.Text(inner, bg=THEME['input_bg'], fg='white', height=18, relief=tk.FLAT, font=('Consolas', 10))
         self.txt_data.grid(row=4, column=0, columnspan=2, sticky='nsew')
         self.create_btn_bar(inner, 5, self.on_analyze, self.on_clear_tab1, "开始分析")
@@ -535,8 +576,8 @@ class CpkApp:
             self.ax.axvline(mu, c=THEME['warning'], ls='-', lw=1.5, alpha=0.8)
             self.ax.text(mu, ymax*0.85, f"μ={mu:.3f}", c=THEME['warning'], ha='center', fontsize=9)
 
-            self.ax.set_xlabel("测量值 (Value)", fontsize=10, color='#aaaaaa', labelpad=5)
-            self.ax.set_ylabel("概率密度 (Density)", fontsize=10, color='#aaaaaa', labelpad=5)
+            self.ax.set_xlabel("测量值", fontsize=10, color='#aaaaaa', labelpad=5)
+            self.ax.set_ylabel("概率密度", fontsize=10, color='#aaaaaa', labelpad=5)
             self.ax.tick_params(colors='#888', labelsize=9)
 
             self.ax.spines['top'].set_visible(False); self.ax.spines['right'].set_visible(False)
@@ -575,7 +616,7 @@ class CpkApp:
         about_label.bind("<Leave>", lambda e: about_label.config(fg=THEME['accent']))
 
     def show_about(self):
-        about_text = "CPK 统计分析工具 V6.1\n\n更新内容:\n• 数据明细：每行10个，最多显示15行 (共150组)\n• 统计指标：新增最大值 (Max) 和最小值 (Min)\n• 界面优化：左侧面板宽度增加至1.25倍"
+        about_text = "CPK 统计分析工具 V7.3 (单页优化版)\n\n更新内容:\n• 极致压缩 PDF 布局，确保单页容纳 150 条数据\n• 减小页边距、标题间距和图表高度\n• 导出的默认路径为软件所在目录"
         DarkMessageBox(self.root, "关于软件", about_text, is_error=False)
 
     # ==========================================
@@ -694,14 +735,16 @@ class CpkApp:
         self.draw_chart(project['data'], project['stats'])
 
         self.txt_excel_preview.delete("1.0", tk.END)
+        s = project['stats']
         preview_text = f"【{project['name']}】详细报告\n"
         preview_text += "="*30 + "\n"
-        preview_text += f"Cpk: {project['cpk_val']:.4f} ({project['level']})\n"
-        preview_text += f"USL: {project['usl']} | LSL: {project['lsl']}\n"
-        preview_text += f"Mean: {project['stats']['Mean']:.4f} | Std: {project['stats']['StdDev']:.4f}\n"
-        preview_text += f"Max: {project['stats']['Max']:.4f} | Min: {project['stats']['Min']:.4f}\n"
-        preview_text += f"PPM: {int(project['stats']['PPM'])}\n"
-        preview_text += f"超规数：{project['stats'].get('OutOfSpecCount', 0)}\n"
+        preview_text += f"Cpk: {s['Cpk']:.4f} ({s['CPK_LEVEL']})\n"
+        preview_text += f"USL: {s['USL']} | LSL: {s['LSL']}\n"
+        preview_text += f"均值：{s['Mean']:.4f} | 中位数：{s['Median']:.4f}\n"
+        preview_text += f"标准差：{s['StdDev']:.4f} | CV: {s['CV']:.2f}%\n"
+        preview_text += f"偏度：{s['Skewness']:.3f} | 峰度：{s['Kurtosis']:.3f}\n"
+        preview_text += f"最大：{s['Max']:.4f} | 最小：{s['Min']:.4f} | 极差：{s['Range']:.4f}\n"
+        preview_text += f"PPM: {int(s['PPM'])} | 超规数：{s['OutOfSpecCount']}\n"
         preview_text += "="*30 + "\n\n数据前 30 行:\n"
 
         for i, val in enumerate(project['data'][:30]):
@@ -740,7 +783,7 @@ class CpkApp:
             defaultextension=".pdf",
             initialfile=default_filename,
             filetypes=[("PDF 文件", "*.pdf"), ("所有文件", "*.*")],
-            initialdir=os.path.expanduser("~")
+            initialdir=self.app_dir
         )
 
         if not file_path:
@@ -795,7 +838,7 @@ class CpkApp:
             defaultextension=".pdf",
             initialfile=default_filename,
             filetypes=[("PDF 文件", "*.pdf"), ("所有文件", "*.*")],
-            initialdir=os.path.expanduser("~")
+            initialdir=self.app_dir
         )
 
         if not file_path:
@@ -829,13 +872,12 @@ class CpkApp:
             DarkMessageBox(self.root, "导出失败", f"错误:\n{str(e)}\n{traceback.format_exc()}")
 
     def _generate_merged_pdf_report(self, file_path, projects_list):
-        """生成包含所有项目的单一PDF文件"""
         temp_img_paths = []
-        figs = []
         try:
+            # 【优化】减小页边距至 1.0cm
             doc = SimpleDocTemplate(file_path, pagesize=A4, 
-                                    rightMargin=1.5*cm, leftMargin=1.5*cm, 
-                                    topMargin=1.5*cm, bottomMargin=1.5*cm)
+                                    rightMargin=1.0*cm, leftMargin=1.0*cm, 
+                                    topMargin=1.0*cm, bottomMargin=1.0*cm)
             story = []
             styles = getSampleStyleSheet()
 
@@ -847,16 +889,17 @@ class CpkApp:
                         pdfmetrics.registerFont(TTFont('SimHei', path)); font_name = 'SimHei'
             except: pass
 
-            title_style = ParagraphStyle('Title', parent=styles['Heading1'], fontName=font_name, fontSize=18, alignment=TA_CENTER, spaceAfter=10, textColor=colors.black)
-            sub_style = ParagraphStyle('Sub', parent=styles['Normal'], fontName=font_name, fontSize=10, alignment=TA_CENTER, spaceAfter=20, textColor=colors.gray)
-            head_style = ParagraphStyle('Head', parent=styles['Heading3'], fontName=font_name, fontSize=12, spaceBefore=10, spaceAfter=5, textColor=colors.darkblue)
+            # 【优化】极度压缩标题样式间距
+            title_style = ParagraphStyle('Title', parent=styles['Heading1'], fontName=font_name, fontSize=18, alignment=TA_CENTER, spaceAfter=5, textColor=colors.black, leading=22)
+            sub_style = ParagraphStyle('Sub', parent=styles['Normal'], fontName=font_name, fontSize=9, alignment=TA_CENTER, spaceAfter=10, textColor=colors.gray)
+            head_style = ParagraphStyle('Head', parent=styles['Heading3'], fontName=font_name, fontSize=12, spaceBefore=8, spaceAfter=4, textColor=colors.darkblue, leading=14)
             normal_style = ParagraphStyle('Norm', parent=styles['Normal'], fontName=font_name, fontSize=9, leading=12, textColor=colors.black)
 
             story.append(Paragraph("CPK 过程能力汇总分析报告", title_style))
-            story.append(Paragraph(f"生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')} | 包含项目数：{len(projects_list)}", sub_style))
+            story.append(Paragraph(f"时间：{datetime.now().strftime('%Y-%m-%d %H:%M')} | 项目数：{len(projects_list)}", sub_style))
             story.append(PageBreak())
 
-            story.append(Paragraph("目录", head_style))
+            story.append(Paragraph("目 录", head_style))
             toc_data = []
             for i, proj in enumerate(projects_list):
                 toc_data.append([f"{i+1}. {proj['name']}", f"Cpk: {proj['cpk_val']:.3f} ({proj['level']})"])
@@ -866,7 +909,7 @@ class CpkApp:
                 ('FONTNAME', (0, 0), (-1, -1), font_name), ('FONTSIZE', (0, 0), (-1, -1), 9),
                 ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
                 ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-                ('GRID', (0, 0), (-1, -1), 0.25, colors.lightgrey),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
             ]))
             story.append(t_toc)
             story.append(PageBreak())
@@ -879,16 +922,16 @@ class CpkApp:
                 self.project_name = proj['name']
 
                 story.append(Paragraph(f"项目 {i+1}: {proj['name']}", head_style))
-                story.append(Spacer(1, 0.1*inch))
+                story.append(Spacer(1, 0.05*inch))
 
-                story.extend(self._create_stats_table_story(normal_style, font_name))
-                story.append(Spacer(1, 0.15*inch))
+                story.extend(self._create_stats_table_story(normal_style, font_name, compact=True))
+                story.append(Spacer(1, 0.08*inch))
 
-                img_path = self._create_temp_chart_image()
+                img_path = self._create_temp_chart_image(compact=True)
                 temp_img_paths.append(img_path)
-                img = Image(img_path, width=6.5*inch, height=4.2*inch)
+                img = Image(img_path, width=6.8*inch, height=3.6*inch)
                 story.append(img)
-                story.append(Spacer(1, 0.1*inch))
+                story.append(Spacer(1, 0.05*inch))
 
                 story.extend(self._create_data_table_story(normal_style, font_name))
 
@@ -903,12 +946,12 @@ class CpkApp:
                     except: pass
 
     def _generate_single_pdf_logic(self, file_path):
-        """单个报告生成逻辑"""
         temp_img_paths = []
         try:
+            # 【优化】减小页边距至 1.0cm
             doc = SimpleDocTemplate(file_path, pagesize=A4, 
-                                    rightMargin=1.5*cm, leftMargin=1.5*cm, 
-                                    topMargin=1.5*cm, bottomMargin=1.5*cm)
+                                    rightMargin=1.0*cm, leftMargin=1.0*cm, 
+                                    topMargin=1.0*cm, bottomMargin=1.0*cm)
             story = []
             styles = getSampleStyleSheet()
 
@@ -920,23 +963,24 @@ class CpkApp:
                         pdfmetrics.registerFont(TTFont('SimHei', path)); font_name = 'SimHei'
             except: pass
 
-            title_style = ParagraphStyle('Title', parent=styles['Heading1'], fontName=font_name, fontSize=16, alignment=TA_CENTER, spaceAfter=5, textColor=colors.black)
-            sub_style = ParagraphStyle('Sub', parent=styles['Normal'], fontName=font_name, fontSize=9, alignment=TA_CENTER, spaceAfter=12, textColor=colors.gray)
-            head_style = ParagraphStyle('Head', parent=styles['Heading3'], fontName=font_name, fontSize=10, spaceBefore=8, spaceAfter=4, textColor=colors.darkblue)
+            # 【优化】极度压缩标题样式间距
+            title_style = ParagraphStyle('Title', parent=styles['Heading1'], fontName=font_name, fontSize=18, alignment=TA_CENTER, spaceAfter=5, textColor=colors.black, leading=22)
+            sub_style = ParagraphStyle('Sub', parent=styles['Normal'], fontName=font_name, fontSize=9, alignment=TA_CENTER, spaceAfter=8, textColor=colors.gray)
+            head_style = ParagraphStyle('Head', parent=styles['Heading3'], fontName=font_name, fontSize=12, spaceBefore=8, spaceAfter=4, textColor=colors.darkblue, leading=14)
             normal_style = ParagraphStyle('Norm', parent=styles['Normal'], fontName=font_name, fontSize=9, leading=12, textColor=colors.black)
 
             story.append(Paragraph("CPK 过程能力分析报表", title_style))
-            story.append(Paragraph(f"项目名称：{self.project_name} | 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}", sub_style))
+            story.append(Paragraph(f"项目：{self.project_name} | 时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}", sub_style))
             
-            story.extend(self._create_stats_table_story(normal_style, font_name))
-            story.append(Spacer(1, 0.15*inch))
+            story.extend(self._create_stats_table_story(normal_style, font_name, compact=True))
+            story.append(Spacer(1, 0.08*inch))
 
-            img_path = self._create_temp_chart_image()
+            img_path = self._create_temp_chart_image(compact=True)
             temp_img_paths.append(img_path)
             story.append(Paragraph("分布直方图", head_style))
-            img = Image(img_path, width=6.5*inch, height=4.2*inch)
+            img = Image(img_path, width=6.8*inch, height=3.6*inch)
             story.append(img)
-            story.append(Spacer(1, 0.1*inch))
+            story.append(Spacer(1, 0.05*inch))
 
             story.append(Paragraph("原始数据明细", head_style))
             story.extend(self._create_data_table_story(normal_style, font_name))
@@ -948,8 +992,7 @@ class CpkApp:
                     try: os.unlink(path)
                     except: pass
 
-    def _create_stats_table_story(self, normal_style, font_name):
-        """构建统计表格的 Story 元素列表 (含 Max/Min)"""
+    def _create_stats_table_story(self, normal_style, font_name, compact=False):
         s = self.current_stats
         highlight_color = colors.Color(0.93, 0.96, 1.0)
         
@@ -958,44 +1001,66 @@ class CpkApp:
             return fmt_str.format(val)
 
         out_of_spec = s.get('OutOfSpecCount', 0)
+        
+        # 根据是否紧凑模式调整字号
+        fs_main = 9 if compact else 10
+        fs_small = 7.5 if compact else 9
 
-        # 重新布局表格以容纳 Max/Min
         core_data = [
             [
-                Paragraph("<b>USL (上限)</b><br/>" + safe_fmt(s['USL']), normal_style),
-                Paragraph("<b>LSL (下限)</b><br/>" + safe_fmt(s['LSL']), normal_style),
-                Paragraph("<b>Cpk (能力指数)</b><br/><font size=14 color='darkred'>" + safe_fmt(s['Cpk']) + "</font>", normal_style),
-                Paragraph("<b>PPM (不良率)</b><br/><font size=14 color='darkred'>" + (f"{int(s['PPM'])}" if s['PPM'] is not None else "-") + "</font>", normal_style)
+                Paragraph("<b>USL</b><br/>" + safe_fmt(s['USL']), normal_style),
+                Paragraph("<b>LSL</b><br/>" + safe_fmt(s['LSL']), normal_style),
+                Paragraph("<b>Cpk</b><br/><font size=14 color='darkred'>" + safe_fmt(s['Cpk']) + "</font>", normal_style),
+                Paragraph("<b>PPM</b><br/><font size=14 color='darkred'>" + (f"{int(s['PPM'])}" if s['PPM'] is not None else "-") + "</font>", normal_style)
             ],
             [
-                Paragraph("Mean: " + safe_fmt(s['Mean']) + "<br/>Std: " + safe_fmt(s['StdDev']), ParagraphStyle('Small', parent=normal_style, fontSize=8)),
-                Paragraph("Max: " + safe_fmt(s['Max']) + "<br/>Min: " + safe_fmt(s['Min']), ParagraphStyle('Small', parent=normal_style, fontSize=8)), # 新增 Max/Min
-                Paragraph("Cp: " + safe_fmt(s['Cp']) + "<br/>等级：<b>" + f"{s['CPK_LEVEL']}" + "</b>", ParagraphStyle('Small', parent=normal_style, fontSize=8)),
-                Paragraph("样本数 N: <b>" + f"{int(s['Count'])}" + "</b><br/>超规数：<b>" + f"{int(out_of_spec)}" + "</b>", ParagraphStyle('Small', parent=normal_style, fontSize=8))
+                Paragraph("均值：" + safe_fmt(s['Mean']), ParagraphStyle('Small', parent=normal_style, fontSize=fs_small)),
+                Paragraph("中位数：" + safe_fmt(s['Median']), ParagraphStyle('Small', parent=normal_style, fontSize=fs_small)),
+                Paragraph("标准差：" + safe_fmt(s['StdDev']), ParagraphStyle('Small', parent=normal_style, fontSize=fs_small)),
+                Paragraph("CV：" + f"{s['CV']:.2f}%", ParagraphStyle('Small', parent=normal_style, fontSize=fs_small))
+            ],
+            [
+                Paragraph("最大：" + safe_fmt(s['Max']), ParagraphStyle('Small', parent=normal_style, fontSize=fs_small)),
+                Paragraph("最小：" + safe_fmt(s['Min']), ParagraphStyle('Small', parent=normal_style, fontSize=fs_small)),
+                Paragraph("极差：" + safe_fmt(s['Range']), ParagraphStyle('Small', parent=normal_style, fontSize=fs_small)),
+                Paragraph("偏度：" + f"{s['Skewness']:.2f}<br/>峰度：" + f"{s['Kurtosis']:.2f}", ParagraphStyle('Small', parent=normal_style, fontSize=fs_small-1))
+            ],
+            [
+                Paragraph("Cp：" + safe_fmt(s['Cp']), ParagraphStyle('Small', parent=normal_style, fontSize=fs_small)),
+                Paragraph("Sigma：" + f"{s['SigmaLevel']:.2f}σ", ParagraphStyle('Small', parent=normal_style, fontSize=fs_small)),
+                Paragraph("N：" + f"{int(s['Count'])}", ParagraphStyle('Small', parent=normal_style, fontSize=fs_small)),
+                Paragraph("超规：<b>" + f"{int(out_of_spec)}" + "</b>", ParagraphStyle('Small', parent=normal_style, fontSize=fs_small))
             ]
         ]
 
-        t_core = Table(core_data, colWidths=[4.0*cm, 4.0*cm, 4.0*cm, 4.0*cm])
+        # 紧凑模式下减小列宽和行高
+        col_w = 4.0*cm if compact else 4.2*cm
+        pad_big = 4 if compact else 8
+        pad_small = 2 if compact else 4
+
+        t_core = Table(core_data, colWidths=[col_w] * 4)
         t_core.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), highlight_color),
-            ('BOX', (0, 0), (-1, 0), 1.5, colors.darkblue),
+            ('BOX', (0, 0), (-1, 0), 1.0, colors.darkblue),
             ('INNERGRID', (0, 0), (-1, 0), 0.5, colors.white),
             ('ALIGN', (0, 0), (-1, 0), 'CENTER'), ('VALIGN', (0, 0), (-1, 0), 'MIDDLE'),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 8), ('TOPPADDING', (0, 0), (-1, 0), 8),
-            ('FONTNAME', (0, 0), (-1, 0), font_name), ('FONTSIZE', (0, 0), (-1, 0), 9),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), pad_big), ('TOPPADDING', (0, 0), (-1, 0), pad_big),
+            ('FONTNAME', (0, 0), (-1, 0), font_name), ('FONTSIZE', (0, 0), (-1, 0), fs_main),
             
-            ('BACKGROUND', (0, 1), (-1, 1), colors.white),
-            ('BOX', (0, 1), (-1, 1), 0.5, colors.lightgrey),
-            ('ALIGN', (0, 1), (-1, 1), 'CENTER'), ('VALIGN', (0, 1), (-1, 1), 'MIDDLE'),
-            ('BOTTOMPADDING', (0, 1), (-1, 1), 5), ('TOPPADDING', (0, 1), (-1, 1), 5),
-            ('FONTNAME', (0, 1), (-1, 1), font_name), ('FONTSIZE', (0, 1), (-1, 1), 8),
-            ('TEXTCOLOR', (0, 1), (-1, 1), colors.darkgrey),
+            ('BACKGROUND', (0, 1), (-1, 3), colors.white),
+            ('BOX', (0, 1), (-1, 3), 0.5, colors.lightgrey),
+            ('ALIGN', (0, 1), (-1, 3), 'CENTER'), ('VALIGN', (0, 1), (-1, 3), 'MIDDLE'),
+            ('BOTTOMPADDING', (0, 1), (-1, 3), pad_small), ('TOPPADDING', (0, 1), (-1, 3), pad_small),
+            ('FONTNAME', (0, 1), (-1, 3), font_name), ('FONTSIZE', (0, 1), (-1, 3), fs_small),
+            ('TEXTCOLOR', (0, 1), (-1, 3), colors.darkgrey),
         ]))
         return [t_core]
 
-    def _create_temp_chart_image(self):
-        """生成临时图表图片并返回路径"""
-        fig, ax = plt.subplots(figsize=(7.5, 4.8), dpi=300)
+    def _create_temp_chart_image(self, compact=False):
+        # 紧凑模式下稍微减小图表尺寸
+        w = 7.0 if compact else 7.5
+        h = 3.6 if compact else 4.0
+        fig, ax = plt.subplots(figsize=(w, h), dpi=300)
         fig.patch.set_facecolor('white')
         ax.set_facecolor('white')
 
@@ -1030,11 +1095,11 @@ class CpkApp:
         
         ax.axvline(mu, c='#16a34a', ls='-', lw=2)
 
-        title_str = f"Project: {self.project_name} | Cpk = {stats['Cpk']:.3f}"
-        ax.set_title(title_str, fontsize=12, fontweight='bold', pad=10)
-        ax.set_xlabel("Measurement Value", fontsize=10, color='black', labelpad=5)
-        ax.set_ylabel("Probability Density", fontsize=10, color='black', labelpad=5)
-        ax.tick_params(colors='black', labelsize=9)
+        title_str = f"Cpk = {stats['Cpk']:.3f}"
+        ax.set_title(title_str, fontsize=12, fontweight='bold', pad=5, fontname='SimHei' if os.name=='nt' else 'sans-serif')
+        ax.set_xlabel("测量值", fontsize=9, color='black', labelpad=2, fontname='SimHei' if os.name=='nt' else 'sans-serif')
+        ax.set_ylabel("密度", fontsize=9, color='black', labelpad=2, fontname='SimHei' if os.name=='nt' else 'sans-serif')
+        ax.tick_params(colors='black', labelsize=8)
 
         ax.grid(True, linestyle='--', alpha=0.3, color='gray')
         ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
@@ -1050,12 +1115,10 @@ class CpkApp:
         return temp_img_path
 
     def _create_data_table_story(self, normal_style, font_name):
-        """构建数据明细表格的 Story 元素列表"""
         d_list = self.current_data
         if isinstance(d_list, np.ndarray):
             d_list = d_list.tolist()
 
-        # 【修改点 1】一行10个，最多15行 (共150个数据)
         cols = 10
         max_rows = 15
         rows_data = []
@@ -1072,18 +1135,19 @@ class CpkApp:
 
         result_story = []
         if rows_data:
-            col_width = (16.0 * cm) / cols 
+            col_width = (17.0 * cm) / cols 
             t_data = Table(rows_data, colWidths=[col_width] * cols)
             
+            # 极致压缩数据表
             data_table_style = [
                 ('FONTNAME', (0, 0), (-1, -1), font_name), 
-                ('FONTSIZE', (0, 0), (-1, -1), 7),
+                ('FONTSIZE', (0, 0), (-1, -1), 6.5),
                 ('ALIGN', (0, 0), (-1, -1), 'CENTER'), 
                 ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                ('LEFTPADDING', (0, 0), (-1, -1), 2), 
-                ('RIGHTPADDING', (0, 0), (-1, -1), 2),
-                ('TOPPADDING', (0, 0), (-1, -1), 2), 
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+                ('LEFTPADDING', (0, 0), (-1, -1), 1), 
+                ('RIGHTPADDING', (0, 0), (-1, -1), 1),
+                ('TOPPADDING', (0, 0), (-1, -1), 1),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
                 ('GRID', (0, 0), (-1, -1), 0.25, colors.lightgrey),
             ]
             for i_row in range(len(rows_data)):
@@ -1094,8 +1158,8 @@ class CpkApp:
             result_story.append(t_data)
 
         if len(self.current_data) > total_limit:
-            note_style = ParagraphStyle('Note', parent=normal_style, fontSize=7, textColor=colors.gray, alignment=TA_CENTER)
-            result_story.append(Paragraph(f"... 共 {len(self.current_data)} 条数据，此处仅显示前 {total_limit} 条 ({max_rows}行 x {cols}列)", note_style))
+            note_style = ParagraphStyle('Note', parent=normal_style, fontSize=6, textColor=colors.gray, alignment=TA_CENTER, spaceBefore=2)
+            result_story.append(Paragraph(f"... 共 {len(self.current_data)} 条，显示前 {total_limit} 条", note_style))
         
         return result_story
 
