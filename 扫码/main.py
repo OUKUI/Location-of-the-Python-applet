@@ -1,3 +1,7 @@
+# main.py
+"""
+Copyright © 2025 Github:OUKUI All Rights Reserved.
+"""
 import tkinter as tk
 from tkinter import font as tkfont
 
