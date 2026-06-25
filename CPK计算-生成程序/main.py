@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, simpledialog
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -155,43 +155,44 @@ class CpkCalculator:
 # ==========================================
 # 4. 界面组件
 # ==========================================
-class DarkMessageBox(tk.Toplevel):
-    def __init__(self, parent, title, message, is_error=True):
-        super().__init__(parent)
-        self.configure(bg=THEME['panel'])
-        self.title(title)
-        base_width, base_height = 500, 200
-        msg_lines = message.count('\n') + 1
-        estimated_lines = max(msg_lines, len(message) // 50)
-        h = min(max(base_height, 150 + estimated_lines * 25), 600)
-        w = min(max(base_width, min(len(message) * 8, 700)), 800)
-        
-        x = parent.winfo_x() + (parent.winfo_width()//2) - (w//2)
-        y = parent.winfo_y() + (parent.winfo_height()//2) - (h//2)
-        self.geometry(f"{int(w)}x{int(h)}+{int(x)}+{int(y)}")
-        self.transient(parent); self.grab_set()
+def show_msg(parent, title, msg, is_error=True):
+    dlg = tk.Toplevel(parent)
+    dlg.title(title)
+    dlg.configure(bg=THEME['panel'])
+    dlg.resizable(False, False)
+    dlg.transient(parent)
+    dlg.grab_set()
 
-        color = THEME['danger'] if is_error else THEME['success']
-        symbol = "❌ 错误" if is_error else "✅ 提示"
-        tk.Label(self, text=symbol, font=("Segoe UI", 14, "bold"), bg=THEME['panel'], fg=color).pack(pady=(20, 10))
+    color = THEME['danger'] if is_error else THEME['success']
+    icon = "✕" if is_error else "✓"
 
-        msg_frame = tk.Frame(self, bg=THEME['panel'])
-        msg_frame.pack(pady=10, padx=20, fill=tk.BOTH, expand=True)
-        scrollbar = tk.Scrollbar(msg_frame, bg=THEME['input_bg'])
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        text_widget = tk.Text(msg_frame, font=("Microsoft YaHei", 10), bg=THEME['input_bg'], fg='#ddd',
-                              wrap=tk.WORD, height=max(3, min(estimated_lines, 15)), relief=tk.FLAT, padx=10, pady=10, yscrollcommand=scrollbar.set)
-        text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.config(command=text_widget.yview)
-        text_widget.insert('1.0', message)
-        text_widget.config(state=tk.DISABLED)
+    header = tk.Frame(dlg, bg=THEME['panel'])
+    header.pack(fill=tk.X, padx=24, pady=(20, 8))
+    tk.Label(header, text=icon, font=("Segoe UI", 18), bg=THEME['panel'], fg=color).pack(side=tk.LEFT, padx=(0, 10))
+    tk.Label(header, text=title, font=("Segoe UI", 12, "bold"), bg=THEME['panel'], fg='white').pack(side=tk.LEFT)
 
-        btn = tk.Button(self, text="确定", bg=THEME['input_bg'], fg='white', relief=tk.FLAT, command=self.destroy, width=15, font=("Microsoft YaHei", 10))
-        btn.pack(pady=15)
-        self.bind('<Return>', lambda e: self.destroy())
-        self.bind('<Escape>', lambda e: self.destroy())
-        self.focus_force()
-        self.wait_window()
+    msg_frame = tk.Frame(dlg, bg=THEME['panel'])
+    msg_frame.pack(fill=tk.BOTH, expand=True, padx=30, pady=(0, 16))
+    tk.Label(msg_frame, text=msg, font=("Microsoft YaHei", 10), bg=THEME['panel'],
+             fg=THEME['fg'], wraplength=420, justify=tk.LEFT).pack()
+
+    btn_frame = tk.Frame(dlg, bg=THEME['input_bg'])
+    btn_frame.pack(fill=tk.X)
+    tk.Button(btn_frame, text="确定", bg=THEME['accent'], fg='white', relief=tk.FLAT,
+              font=("Microsoft YaHei", 10), width=10, command=dlg.destroy).pack(pady=8)
+
+    dlg.update_idletasks()
+    pw, ph = parent.winfo_width(), parent.winfo_height()
+    px = parent.winfo_x() + (pw - dlg.winfo_width()) // 2
+    py = parent.winfo_y() + (ph - dlg.winfo_height()) // 2
+    dlg.geometry(f"+{px}+{py}")
+
+    dlg.bind('<Return>', lambda e: dlg.destroy())
+    dlg.bind('<Escape>', lambda e: dlg.destroy())
+    dlg.focus_force()
+    dlg.wait_window()
+
+
 
 class CpkApp:
     def __init__(self, root):
@@ -213,6 +214,7 @@ class CpkApp:
         self.current_excel_index = -1
 
         self.setup_ui()
+        self.root.bind('<Control-Shift-D>', self._show_debug_prompt)
 
     def setup_ui(self):
         style = ttk.Style()
@@ -272,12 +274,13 @@ class CpkApp:
         nb.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
 
         t1 = ttk.Frame(nb); nb.add(t1, text=' 数据分析 ')
-        t2 = ttk.Frame(nb); nb.add(t2, text=' 模拟生成 ')
         t3 = ttk.Frame(nb); nb.add(t3, text=' Excel 导入 ')
 
         self.setup_tab1(t1)
-        self.setup_tab2(t2)
         self.setup_tab3(t3)
+
+        self._notebook = nb
+        self._debug_tab_active = False
 
         export_frame = tk.Frame(parent, bg=THEME['panel'])
         export_frame.pack(fill=tk.X, padx=15, pady=(10, 20))
@@ -303,6 +306,11 @@ class CpkApp:
 
         nb.bind("<<NotebookTabChanged>>", self.on_tab_changed)
         self.main_notebook = nb
+
+        self._debug_btn = tk.Label(parent, text="🔧 调试模式", bg=THEME['panel'], fg='#555',
+                                    font=("Microsoft YaHei", 8), cursor="hand2")
+        self._debug_btn.pack(side=tk.BOTTOM, pady=(0, 10))
+        self._debug_btn.bind("<Button-1>", lambda e: self._toggle_debug())
 
     def on_tab_changed(self, event):
         selected_tab = event.widget.tab('current')['text']
@@ -464,13 +472,15 @@ class CpkApp:
         list_frame.grid(row=1, column=0, sticky='nsew', padx=(20, 10), pady=(0, 20))
         list_frame.pack_propagate(False)
 
-        cols = ('cpk', 'level')
+        cols = ('sheet', 'cpk', 'level')
         self.tree_projects = ttk.Treeview(list_frame, columns=cols, displaycolumns=cols, selectmode='browse')
         self.tree_projects.heading('#0', text='项目名称', anchor='w')
+        self.tree_projects.heading('sheet', text='子表', anchor='center')
         self.tree_projects.heading('cpk', text='Cpk', anchor='center')
         self.tree_projects.heading('level', text='等级', anchor='center')
 
-        self.tree_projects.column('#0', width=140, anchor='w')
+        self.tree_projects.column('#0', width=100, anchor='w')
+        self.tree_projects.column('sheet', width=65, anchor='center')
         self.tree_projects.column('cpk', width=50, anchor='center')
         self.tree_projects.column('level', width=50, anchor='center')
 
@@ -507,15 +517,15 @@ class CpkApp:
     def on_analyze(self):
         usl = self.get_val(self.inp_an_usl, allow_empty=True)
         lsl = self.get_val(self.inp_an_lsl, allow_empty=True)
-        if usl is False or lsl is False: DarkMessageBox(self.root, "输入错误", "规格值必须是数字"); return
-        if usl is None and lsl is None: DarkMessageBox(self.root, "缺失规格", "请至少输入一个规格限"); return
+        if usl is False or lsl is False: show_msg(self.root, "输入错误", "规格值必须是数字"); return
+        if usl is None and lsl is None: show_msg(self.root, "缺失规格", "请至少输入一个规格限"); return
         
         raw = self.txt_data.get("1.0", tk.END)
         nums = re.findall(r"[-+]?\d*\.?\d+|\d+", raw)
         try:
             data = np.array([float(x) for x in nums])
             if len(data) < 2: raise ValueError
-        except: DarkMessageBox(self.root, "数据错误", "请检查输入数据"); return
+        except: show_msg(self.root, "数据错误", "请检查输入数据"); return
         
         self.process_result(data, usl, lsl)
 
@@ -524,11 +534,11 @@ class CpkApp:
         lsl = self.get_val(self.inp_sim_lsl, allow_empty=True)
         cpk = self.get_val(self.inp_sim_cpk); mean = self.get_val(self.inp_sim_mean)
         cnt = self.get_val(self.inp_sim_cnt, True); prec = self.get_val(self.inp_sim_prec, True)
-        if any(x is False for x in [usl, lsl, cpk, mean, cnt, prec]): DarkMessageBox(self.root, "输入错误", "请检查数值格式"); return
-        if usl is None and lsl is None: DarkMessageBox(self.root, "缺失规格", "请至少输入一个规格限"); return
+        if any(x is False for x in [usl, lsl, cpk, mean, cnt, prec]): show_msg(self.root, "输入错误", "请检查数值格式"); return
+        if usl is None and lsl is None: show_msg(self.root, "缺失规格", "请至少输入一个规格限"); return
         
         data = CpkCalculator.simulate(cpk, mean, usl, lsl, cnt, max(0, min(prec, 10)))
-        if data is None: DarkMessageBox(self.root, "错误", "无法生成数据"); return
+        if data is None: show_msg(self.root, "错误", "无法生成数据"); return
         
         fmt = f"{{:.{prec}f}}"
         self.txt_sim.delete("1.0", tk.END)
@@ -537,7 +547,7 @@ class CpkApp:
 
     def process_result(self, data, usl, lsl, project_name=None):
         stats = CpkCalculator.calculate(data, usl, lsl)
-        if "Error" in stats: DarkMessageBox(self.root, "计算错误", stats["Error"]); return
+        if "Error" in stats: show_msg(self.root, "计算错误", stats["Error"]); return
         
         self.current_data = data; self.current_stats = stats
         self.current_usl = usl; self.current_lsl = lsl
@@ -606,7 +616,7 @@ class CpkApp:
 
     def on_copy(self):
         self.root.clipboard_clear(); self.root.clipboard_append(self.txt_sim.get("1.0", tk.END))
-        DarkMessageBox(self.root, "复制成功", "内容已复制到剪贴板", False)
+        show_msg(self.root, "复制成功", "内容已复制到剪贴板", False)
 
     def add_about_link(self):
         about_label = tk.Label(self.root, text="关于软件", bg=THEME['bg'], fg=THEME['accent'], font=("Microsoft YaHei", 9, "underline"), cursor="hand2")
@@ -617,14 +627,29 @@ class CpkApp:
 
     def show_about(self):
         about_text = "CPK 统计分析工具 V7.3 (单页优化版)\n\n更新内容:\n• 极致压缩 PDF 布局，确保单页容纳 150 条数据\n• 减小页边距、标题间距和图表高度\n• 导出的默认路径为软件所在目录"
-        DarkMessageBox(self.root, "关于软件", about_text, is_error=False)
+        show_msg(self.root, "关于软件", about_text, is_error=False)
+
+    def _show_debug_prompt(self, event=None):
+        if self._debug_tab_active:
+            return
+        pwd = simpledialog.askstring("调试模式", "请输入调试密码：", show='*', parent=self.root)
+        if pwd == "114514":
+            t2 = ttk.Frame(self._notebook)
+            self._notebook.insert(1, t2, text=' 模拟生成 ')
+            self.setup_tab2(t2)
+            self._debug_tab_active = True
+            self._debug_btn.config(fg=THEME['success'], text="🔧 调试模式 ✓")
+            show_msg(self.root, "调试模式", "模拟生成模块已激活", is_error=False)
+
+    def _toggle_debug(self, event=None):
+        self._show_debug_prompt()
 
     # ==========================================
     # 5. Excel 导入相关功能
     # ==========================================
     def load_excel_file(self):
         if not PANDAS_AVAILABLE:
-            DarkMessageBox(self.root, "缺少依赖", "未安装 pandas 或 openpyxl。\n请运行：pip install pandas openpyxl")
+            show_msg(self.root, "缺少依赖", "未安装 pandas 或 openpyxl。\n请运行：pip install pandas openpyxl")
             return
 
         file_path = filedialog.askopenfilename(
@@ -635,79 +660,104 @@ class CpkApp:
             return
 
         try:
-            df = pd.read_excel(file_path, header=None)
+            xl = pd.ExcelFile(file_path)
+            sheet_names = xl.sheet_names
+            is_comparison_mode = len(sheet_names) > 1
 
-            if df.shape[0] < 4:
-                DarkMessageBox(self.root, "格式错误", "Excel 文件至少需要 4 行数据:\n1. 项目名\n2. USL\n3. LSL\n4. 数据起始行")
-                return
-
-            new_projects = []
-            num_cols = df.shape[1]
+            all_projects = []
             error_logs = []
 
-            for col_idx in range(num_cols):
-                col_data = df.iloc[:, col_idx]
+            for sheet_name in sheet_names:
+                df = xl.parse(sheet_name, header=None)
 
-                project_name = col_data.iloc[0]
-                if pd.isna(project_name) or str(project_name).strip() == "":
-                    project_name = f"Project_{col_idx + 1}"
-                else:
-                    project_name = str(project_name).strip()
-
-                usl_val = col_data.iloc[1]
-                usl = float(usl_val) if not pd.isna(usl_val) else None
-
-                lsl_val = col_data.iloc[2]
-                lsl = float(lsl_val) if not pd.isna(lsl_val) else None
-
-                raw_data = col_data.iloc[3:].dropna()
-                try:
-                    data_array = np.array(raw_data.astype(float))
-                except ValueError:
-                    error_logs.append(f"{project_name}: 数据格式错误")
+                if df.shape[0] < 4:
+                    error_logs.append(f"[{sheet_name}] 数据行不足 (需要≥4行)")
                     continue
 
-                if len(data_array) < 2:
-                    error_logs.append(f"{project_name}: 数据量不足")
-                    continue
+                num_cols = df.shape[1]
 
-                stats = CpkCalculator.calculate(data_array, usl, lsl)
+                for col_idx in range(num_cols):
+                    col_data = df.iloc[:, col_idx]
 
-                if "Error" in stats:
-                    error_logs.append(f"{project_name}: {stats['Error']}")
-                    continue
+                    raw_project_name = col_data.iloc[0]
+                    if pd.isna(raw_project_name) or str(raw_project_name).strip() == "":
+                        project_name = f"Project_{col_idx + 1}"
+                    else:
+                        project_name = str(raw_project_name).strip()
 
-                new_projects.append({
-                    "name": project_name,
-                    "data": data_array,
-                    "usl": usl,
-                    "lsl": lsl,
-                    "stats": stats,
-                    "cpk_val": stats['Cpk'],
-                    "level": stats['CPK_LEVEL']
-                })
+                    usl_val = col_data.iloc[1]
+                    usl = float(usl_val) if not pd.isna(usl_val) else None
 
-            if not new_projects:
+                    lsl_val = col_data.iloc[2]
+                    lsl = float(lsl_val) if not pd.isna(lsl_val) else None
+
+                    raw_data = col_data.iloc[3:].dropna()
+                    try:
+                        data_array = np.array(raw_data.astype(float))
+                    except ValueError:
+                        error_logs.append(f"[{sheet_name}] {project_name}: 数据格式错误")
+                        continue
+
+                    if len(data_array) < 2:
+                        error_logs.append(f"[{sheet_name}] {project_name}: 数据量不足")
+                        continue
+
+                    stats = CpkCalculator.calculate(data_array, usl, lsl)
+
+                    if "Error" in stats:
+                        error_logs.append(f"[{sheet_name}] {project_name}: {stats['Error']}")
+                        continue
+
+                    all_projects.append({
+                        "name": project_name,
+                        "sheet_name": sheet_name,
+                        "data": data_array,
+                        "usl": usl,
+                        "lsl": lsl,
+                        "stats": stats,
+                        "cpk_val": stats['Cpk'],
+                        "level": stats['CPK_LEVEL']
+                    })
+
+            if is_comparison_mode:
+                sheet_groups = {}
+                for sn in sheet_names:
+                    sheet_groups[sn] = []
+                for p in all_projects:
+                    sheet_groups[p['sheet_name']].append(p)
+
+                max_count = max(len(v) for v in sheet_groups.values())
+                interleaved = []
+                for i in range(max_count):
+                    for sn in sheet_names:
+                        if i < len(sheet_groups[sn]):
+                            interleaved.append(sheet_groups[sn][i])
+                all_projects = interleaved
+
+            if not all_projects:
                 msg = "未找到有效数据。"
                 if error_logs:
                     msg += "\n\n错误详情:\n" + "\n".join(error_logs[:5])
-                DarkMessageBox(self.root, "导入失败", msg)
+                show_msg(self.root, "导入失败", msg)
                 return
 
-            self.excel_projects = new_projects
+            self.excel_projects = all_projects
             self.refresh_excel_treeview()
 
             if self.excel_projects:
                 self.tree_projects.selection_set(self.tree_projects.get_children()[0])
                 self.on_excel_item_select(None)
 
-            msg = f"成功导入 {len(self.excel_projects)} 个项目。"
+            msg = f"成功导入 {len(self.excel_projects)} 个项目"
+            if is_comparison_mode:
+                msg += f"（{len(sheet_names)} 个子表，交叉对比模式）"
+            msg += "。"
             if error_logs:
                 msg += f"\n跳过 {len(error_logs)} 个无效项目。"
-            DarkMessageBox(self.root, "导入成功", msg, is_error=False)
+            show_msg(self.root, "导入成功", msg, is_error=False)
 
         except Exception as e:
-            DarkMessageBox(self.root, "导入失败", f"读取 Excel 文件时出错:\n{str(e)}")
+            show_msg(self.root, "导入失败", f"读取 Excel 文件时出错:\n{str(e)}")
 
     def refresh_excel_treeview(self):
         for item in self.tree_projects.get_children():
@@ -716,7 +766,8 @@ class CpkApp:
         for i, proj in enumerate(self.excel_projects):
             cpk = proj['cpk_val']
             level = proj['level']
-            self.tree_projects.insert('', 'end', iid=str(i), text=proj['name'], values=(f"{cpk:.3f}", level))
+            sheet_name = proj.get('sheet_name', 'Sheet1')
+            self.tree_projects.insert('', 'end', iid=str(i), text=proj['name'], values=(sheet_name, f"{cpk:.3f}", level))
 
     def on_excel_item_select(self, event):
         selection = self.tree_projects.selection()
@@ -737,6 +788,8 @@ class CpkApp:
         self.txt_excel_preview.delete("1.0", tk.END)
         s = project['stats']
         preview_text = f"【{project['name']}】详细报告\n"
+        if project.get('sheet_name'):
+            preview_text += f"子表: {project['sheet_name']}\n"
         preview_text += "="*30 + "\n"
         preview_text += f"Cpk: {s['Cpk']:.4f} ({s['CPK_LEVEL']})\n"
         preview_text += f"USL: {s['USL']} | LSL: {s['LSL']}\n"
@@ -769,11 +822,11 @@ class CpkApp:
 
     def export_merged_report(self):
         if not self.excel_projects:
-            DarkMessageBox(self.root, "无数据", "没有可导出的项目数据。请先导入 Excel。")
+            show_msg(self.root, "无数据", "没有可导出的项目数据。请先导入 Excel。")
             return
 
         if not REPORTLAB_AVAILABLE:
-            DarkMessageBox(self.root, "缺少依赖", "未安装 reportlab。")
+            show_msg(self.root, "缺少依赖", "未安装 reportlab。")
             return
 
         default_filename = f"CPK_汇总报告_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
@@ -797,21 +850,21 @@ class CpkApp:
 
             self._generate_merged_pdf_report(file_path, self.excel_projects)
 
-            DarkMessageBox(self.root, "导出成功", f"所有 {len(self.excel_projects)} 个项目已合并保存至:\n{file_path}", is_error=False)
+            show_msg(self.root, "导出成功", f"所有 {len(self.excel_projects)} 个项目已合并保存至:\n{file_path}", is_error=False)
         except Exception as e:
-            DarkMessageBox(self.root, "导出失败", f"错误:\n{str(e)}\n{traceback.format_exc()}")
+            show_msg(self.root, "导出失败", f"错误:\n{str(e)}\n{traceback.format_exc()}")
         finally:
-            self.btn_batch_export.config(text="📦 合并导出所有为一份PDF")
+            self.btn_batch_export.config(state=tk.NORMAL, text="📦 合并导出所有为一份PDF")
 
     def export_report(self):
         if not REPORTLAB_AVAILABLE:
-            DarkMessageBox(self.root, "缺少依赖", "未安装 reportlab。")
+            show_msg(self.root, "缺少依赖", "未安装 reportlab。")
             return
 
         current_tab_text = self.main_notebook.tab('current', 'text')
         if "Excel" in current_tab_text:
             if not self.excel_projects or self.current_excel_index == -1:
-                DarkMessageBox(self.root, "无数据", "请先在列表中选择一个项目。")
+                show_msg(self.root, "无数据", "请先在列表中选择一个项目。")
                 return
             project = self.excel_projects[self.current_excel_index]
             data_to_export = project['data']
@@ -820,7 +873,7 @@ class CpkApp:
             lsl_to_export = project['lsl']
             name_to_export = project['name']
         elif self.current_stats is None:
-            DarkMessageBox(self.root, "无数据", "请先进行分析或模拟生成数据。")
+            show_msg(self.root, "无数据", "请先进行分析或模拟生成数据。")
             return
         else:
             data_to_export = self.current_data
@@ -867,9 +920,9 @@ class CpkApp:
             self.current_lsl = old_lsl
             self.project_name = old_name
 
-            DarkMessageBox(self.root, "导出成功", f"报告已保存至:\n{file_path}", is_error=False)
+            show_msg(self.root, "导出成功", f"报告已保存至:\n{file_path}", is_error=False)
         except Exception as e:
-            DarkMessageBox(self.root, "导出失败", f"错误:\n{str(e)}\n{traceback.format_exc()}")
+            show_msg(self.root, "导出失败", f"错误:\n{str(e)}\n{traceback.format_exc()}")
 
     def _generate_merged_pdf_report(self, file_path, projects_list):
         temp_img_paths = []
@@ -900,17 +953,36 @@ class CpkApp:
             story.append(PageBreak())
 
             story.append(Paragraph("目 录", head_style))
-            toc_data = []
+            toc_header = ["项目名称", "Cpk", "等级", "USL·LSL", "均值", "中位数", "最大值", "最小值"]
+            toc_data = [toc_header]
             for i, proj in enumerate(projects_list):
-                toc_data.append([f"{i+1}. {proj['name']}", f"Cpk: {proj['cpk_val']:.3f} ({proj['level']})"])
+                s = proj['stats']
+                usl_str = f"{s['USL']:.2f}" if s['USL'] is not None else "-"
+                lsl_str = f"{s['LSL']:.2f}" if s['LSL'] is not None else "-"
+                name_display = f"{i+1}. [{proj.get('sheet_name', 'Sheet1')}] {proj['name']}" if proj.get('sheet_name') else f"{i+1}. {proj['name']}"
+                toc_data.append([
+                    name_display,
+                    f"{proj['cpk_val']:.3f}",
+                    proj['level'],
+                    f"{usl_str} · {lsl_str}",
+                    f"{s['Mean']:.3f}",
+                    f"{s['Median']:.3f}",
+                    f"{s['Max']:.3f}",
+                    f"{s['Min']:.3f}",
+                ])
 
-            t_toc = Table(toc_data, colWidths=[12*cm, 4*cm])
-            t_toc.setStyle(TableStyle([
+            col_w = [4.5*cm, 1.5*cm, 1.5*cm, 2.5*cm, 1.8*cm, 1.8*cm, 1.8*cm, 1.8*cm]
+            t_toc = Table(toc_data, colWidths=col_w)
+            toc_style = TableStyle([
                 ('FONTNAME', (0, 0), (-1, -1), font_name), ('FONTSIZE', (0, 0), (-1, -1), 9),
-                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+                ('ALIGN', (0, 0), (0, -1), 'LEFT'),
+                ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 3), ('TOPPADDING', (0, 0), (-1, -1), 3),
                 ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
-            ]))
+                ('BACKGROUND', (0, 0), (-1, 0), colors.Color(0.93, 0.96, 1.0)),
+            ])
+            t_toc.setStyle(toc_style)
             story.append(t_toc)
             story.append(PageBreak())
 
@@ -921,7 +993,8 @@ class CpkApp:
                 self.current_lsl = proj['lsl']
                 self.project_name = proj['name']
 
-                story.append(Paragraph(f"项目 {i+1}: {proj['name']}", head_style))
+                sheet_info = f" [子表: {proj.get('sheet_name', '')}]" if proj.get('sheet_name') else ""
+                story.append(Paragraph(f"项目 {i+1}: {proj['name']}{sheet_info}", head_style))
                 story.append(Spacer(1, 0.05*inch))
 
                 story.extend(self._create_stats_table_story(normal_style, font_name, compact=True))
