@@ -1318,16 +1318,40 @@ class CpkApp:
                     lsl_val = col_data.iloc[2]
                     lsl = float(lsl_val) if not pd.isna(lsl_val) else None
 
-                    raw_data = col_data.iloc[3:].dropna()
+                    raw_values = col_data.iloc[3:]
+                    # 严格过滤空值：NaN、空字符串、纯空格、非数值内容一律忽略
+                    def _is_valid_numeric(v):
+                        if pd.isna(v):
+                            return False
+                        s = str(v).strip()
+                        if s == '':
+                            return False
+                        try:
+                            float(s)
+                            return True
+                        except ValueError:
+                            return False
+
+                    valid_mask = raw_values.apply(_is_valid_numeric)
+                    skipped_count = (~valid_mask).sum()
+                    raw_data = raw_values[valid_mask]
+
+                    if len(raw_data) < 2:
+                        error_logs.append(
+                            f"[{sheet_name}] {project_name}: 有效数据不足 (仅 {len(raw_data)} 条，已忽略 {skipped_count} 个空值)"
+                        )
+                        continue
+
                     try:
                         data_array = np.array(raw_data.astype(float))
                     except ValueError:
                         error_logs.append(f"[{sheet_name}] {project_name}: 数据格式错误")
                         continue
 
-                    if len(data_array) < 2:
-                        error_logs.append(f"[{sheet_name}] {project_name}: 数据量不足")
-                        continue
+                    if skipped_count > 0:
+                        error_logs.append(
+                            f"[{sheet_name}] {project_name}: 已自动忽略 {skipped_count} 个空值/无效值，有效数据 {len(data_array)} 条"
+                        )
 
                     stats = CpkCalculator.calculate(data_array, usl, lsl)
 
