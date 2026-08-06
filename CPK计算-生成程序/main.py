@@ -119,6 +119,11 @@ class ModernButton(tk.Frame):
         self.btn.pack(fill=tk.BOTH, expand=True)
         if width:
             self.btn.configure(width=width)
+        # height 参数生效：固定按钮总高，内部 Label 自动填满
+        if height:
+            self.configure(height=height)
+            self.pack_propagate(False)
+            self.configure(width=self.btn.winfo_reqwidth())
 
         for w in (self, self.btn):
             w.bind('<Enter>', self._on_enter)
@@ -694,15 +699,16 @@ class CpkApp:
 
         self.btn_export = ModernButton(
             export_card.inner, text="导出当前报告 (PDF)", style='success',
-            command=self.export_report, height=44
+            command=self.export_report, height=52, font=(FONT_UI, 12, 'bold')
         )
         self.btn_export.pack(fill=tk.X, pady=(0, 6))
 
         self.btn_batch_export = ModernButton(
             export_card.inner, text="合并导出全部 PDF", style='primary',
-            command=self.export_merged_report, height=44
+            command=self.export_merged_report, height=52, font=(FONT_UI, 12, 'bold')
         )
-        # 默认不显示，Excel 页时显示
+        # 常驻显示（无数据时点击会提示先导入 Excel），不再依赖 tab 切换事件
+        self.btn_batch_export.pack(fill=tk.X, pady=(0, 6))
 
         if not REPORTLAB_AVAILABLE:
             self.btn_export.configure(state=tk.DISABLED, text="缺少 reportlab")
@@ -732,15 +738,14 @@ class CpkApp:
         ))
 
     def on_tab_changed(self, event):
+        # 批量导出按钮已常驻显示，这里只管理"导出当前报告"按钮的可用状态
         selected_tab = event.widget.tab('current')['text']
         if "Excel" in selected_tab:
-            self.btn_batch_export.pack(fill=tk.X)
             if self.excel_projects and self.current_excel_index != -1:
                 self.btn_export.configure(state=tk.NORMAL)
             else:
                 self.btn_export.configure(state=tk.DISABLED)
         else:
-            self.btn_batch_export.pack_forget()
             if self.current_stats:
                 self.btn_export.configure(state=tk.NORMAL)
             else:
@@ -1002,8 +1007,11 @@ class CpkApp:
     def setup_tab3(self, f):
         f.configure(bg=THEME['panel'])
         f.columnconfigure(0, weight=1)
-        f.columnconfigure(1, weight=1)
-        f.rowconfigure(1, weight=1)
+        # 纵向布局：项目列表在上（占大头），数据预览在下。
+        # 注意：不能用左右两列布局——预览文本框请求尺寸很大（默认 80 字符宽），
+        # grid 空间不足时会把项目列表列压成 1px，导致列表不可见、无法切换项目。
+        f.rowconfigure(1, weight=3)
+        f.rowconfigure(2, weight=2)
 
         top = tk.Frame(f, bg=THEME['panel'])
         top.grid(row=0, column=0, columnspan=2, sticky='ew', pady=10, padx=12)
@@ -1016,8 +1024,7 @@ class CpkApp:
         ).pack(side=tk.RIGHT)
 
         list_card = Card(f, pad=0)
-        list_card.grid(row=1, column=0, sticky='nsew', padx=(12, 6), pady=(0, 12))
-        list_card.configure(width=320)
+        list_card.grid(row=1, column=0, columnspan=2, sticky='nsew', padx=12, pady=(0, 6))
         list_inner = list_card.inner
         list_inner.configure(bg=THEME['card'])
 
@@ -1045,7 +1052,7 @@ class CpkApp:
         self.tree_projects.bind('<ButtonRelease-1>', self.on_excel_item_select)
 
         preview_card = Card(f, pad=10)
-        preview_card.grid(row=1, column=1, sticky='nsew', padx=(6, 12), pady=(0, 12))
+        preview_card.grid(row=2, column=0, columnspan=2, sticky='nsew', padx=12, pady=(6, 12))
         tk.Label(
             preview_card.inner, text="数据预览", bg=THEME['card'], fg=THEME['fg'],
             font=(FONT_UI, 10, 'bold')
@@ -1054,7 +1061,8 @@ class CpkApp:
         text_wrap.pack(fill=tk.BOTH, expand=True)
         self.txt_excel_preview = tk.Text(
             text_wrap, bg=THEME['input_bg'], fg=THEME['fg_muted'], relief=tk.FLAT,
-            font=(FONT_MONO, 9), bd=0, padx=8, pady=8, insertbackground=THEME['accent']
+            font=(FONT_MONO, 9), bd=0, padx=8, pady=8, insertbackground=THEME['accent'],
+            width=1, height=1  # 请求尺寸设小，实际尺寸由 pack 拉伸决定
         )
         self.txt_excel_preview.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
 
