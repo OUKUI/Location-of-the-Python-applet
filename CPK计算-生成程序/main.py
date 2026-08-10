@@ -1,17 +1,24 @@
-import tkinter as tk
-from tkinter import ttk, filedialog, simpledialog
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from scipy.stats import norm, skew, kurtosis
+"""CPK 统计分析工具 Pro —— Fluent UI 控件库版本（PySide6）。"""
+import math
+import sys
 import ctypes
 import re
 import os
 import tempfile
-from datetime import datetime
 import traceback
+from datetime import datetime
+from pathlib import Path
 
-# 尝试导入 reportlab
+_KJ_PATH = r"D:\OneDrive\Application\CODE\0_组件库\控件库"
+if _KJ_PATH not in sys.path:
+    sys.path.insert(0, _KJ_PATH)
+
+import matplotlib
+matplotlib.use('Agg')
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.stats import norm, skew, kurtosis
+
 try:
     from reportlab.lib.pagesizes import A4
     from reportlab.platypus import (
@@ -29,284 +36,358 @@ try:
 except ImportError:
     REPORTLAB_AVAILABLE = False
 
-# 尝试导入 pandas 和 openpyxl
 try:
     import pandas as pd
     PANDAS_AVAILABLE = True
 except ImportError:
     PANDAS_AVAILABLE = False
 
-# ==========================================
-# 1. 高分屏适配 (HiDPI)
-# ==========================================
-try:
-    ctypes.windll.shcore.SetProcessDpiAwareness(1)
-    ScaleFactor = ctypes.windll.shcore.GetScaleFactorForDevice(0) / 100
-except Exception:
-    ScaleFactor = 1.0
+from PySide6.QtCore import QPointF, QRectF, Qt, QRect, Signal
+from PySide6.QtGui import (QColor, QFont, QFontMetrics, QGuiApplication,
+                           QKeySequence, QPainter, QPainterPath, QPen,
+                           QPolygonF, QShortcut)
+from PySide6.QtWidgets import (QApplication, QFrame, QGridLayout, QHBoxLayout,
+                               QLabel, QSizePolicy, QTreeWidgetItem,
+                               QVBoxLayout, QWidget, QFileDialog)
 
-# ==========================================
-# 2. 现代化设计系统
-# ==========================================
+from fluent.window import FluentApp, FluentWindow, apply_theme
+from fluent.widgets import (FluentButton, FluentCard, FluentInputDialog,
+                            FluentLineEdit, FluentMessageBox, FluentTabWidget,
+                            FluentTextEdit, FluentTreeView)
+
 plt.style.use('dark_background')
 plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'sans-serif']
 plt.rcParams['axes.unicode_minus'] = False
-plt.rcParams['figure.dpi'] = 100 * ScaleFactor
 
-THEME = {
-    # surfaces
-    'bg': '#0b0f14',
-    'panel': '#12181f',
-    'card': '#171e27',
-    'card_hover': '#1c2530',
-    'input_bg': '#0e141b',
-    'elevated': '#1a222d',
-    # borders / dividers
-    'border': '#273140',
-    'border_soft': '#1e2834',
-    'focus': '#4f7cff',
-    # text
-    'fg': '#e8eef7',
-    'fg_muted': '#8b97a8',
-    'fg_dim': '#5c6a7a',
-    # brand
-    'accent': '#4f7cff',
-    'accent_hover': '#6b93ff',
-    'accent_soft': '#1a2744',
-    'accent_text': '#dbe6ff',
-    # semantic
-    'success': '#3dd68c',
-    'success_soft': '#123526',
-    'danger': '#ff6b6b',
-    'danger_soft': '#3a1717',
-    'warning': '#f5c542',
-    'warning_soft': '#3a2e0f',
-    'info': '#56c4ff',
-    # chart
-    'chart_fill': '#4f7cff',
-    'chart_curve': '#3dd68c',
-    'chart_spec': '#ff6b6b',
-    'chart_mean': '#f5c542',
+C_BG = "#202020"
+C_PANEL = "#1B1B1B"
+C_CARD = "#2B2B2B"
+C_BORDER = "#3B3B3B"
+C_FG = "#FFFFFF"
+C_FG_MUTED = "#9D9D9D"
+C_FG_DIM = "#6E6E6E"
+C_ACCENT = "#0067C0"
+C_ACCENT_LIGHT = "#4CC2FF"
+C_SUCCESS = "#00B050"
+C_WARNING = "#FFB900"
+C_DANGER = "#E74856"
+C_GRID = "#3A3A3A"
+
+LEVEL_COLORS = {
+    "优秀": C_SUCCESS,
+    "良好": "#7CBA5A",
+    "一般": C_WARNING,
+    "较差": "#FF6F00",
+    "很差": C_DANGER,
+}
+LEVEL_BGS = {
+    "优秀": "#123F1E",
+    "良好": "#243018",
+    "一般": "#3A2E0F",
+    "较差": "#3A2410",
+    "很差": "#3A1717",
 }
 
 FONT_UI = 'Microsoft YaHei UI'
 FONT_MONO = 'Consolas'
 
 
-# ==========================================
-# 2.1 现代 UI 组件
-# ==========================================
-class ModernButton(tk.Frame):
-    """扁平圆角感按钮（hover / active / disabled）"""
-
-    def __init__(self, parent, text='', command=None, style='primary',
-                 width=None, height=36, font=None, **kwargs):
-        super().__init__(parent, bg=parent.cget('bg') if hasattr(parent, 'cget') else THEME['panel'], **kwargs)
-        self.command = command
-        self.style = style
-        self._enabled = True
-        self._font = font or (FONT_UI, 10, 'bold')
-        self._height = height
-        self._width = width
-        self._text = text
-        self._colors = self._palette(style)
-
-        self.configure(bg=self._colors['bg'], highlightthickness=0, bd=0)
-        self.btn = tk.Label(
-            self, text=text, bg=self._colors['bg'], fg=self._colors['fg'],
-            font=self._font, cursor='hand2', padx=16, pady=8
-        )
-        self.btn.pack(fill=tk.BOTH, expand=True)
-        if width:
-            self.btn.configure(width=width)
-        # height 参数生效：固定按钮总高，内部 Label 自动填满
-        if height:
-            self.configure(height=height)
-            self.pack_propagate(False)
-            self.configure(width=self.btn.winfo_reqwidth())
-
-        for w in (self, self.btn):
-            w.bind('<Enter>', self._on_enter)
-            w.bind('<Leave>', self._on_leave)
-            w.bind('<Button-1>', self._on_press)
-            w.bind('<ButtonRelease-1>', self._on_release)
-
-    def _palette(self, style):
-        palettes = {
-            'primary': {
-                'bg': THEME['accent'], 'fg': '#ffffff',
-                'hover': THEME['accent_hover'], 'active': '#3d68e8',
-                'disabled_bg': '#2a3545', 'disabled_fg': THEME['fg_dim'],
-            },
-            'success': {
-                'bg': '#1f9d63', 'fg': '#ffffff',
-                'hover': '#24b572', 'active': '#178552',
-                'disabled_bg': '#2a3545', 'disabled_fg': THEME['fg_dim'],
-            },
-            'danger': {
-                'bg': '#c94444', 'fg': '#ffffff',
-                'hover': '#e05555', 'active': '#a83636',
-                'disabled_bg': '#2a3545', 'disabled_fg': THEME['fg_dim'],
-            },
-            'ghost': {
-                'bg': THEME['elevated'], 'fg': THEME['fg'],
-                'hover': THEME['card_hover'], 'active': THEME['border'],
-                'disabled_bg': THEME['panel'], 'disabled_fg': THEME['fg_dim'],
-            },
-            'soft': {
-                'bg': THEME['accent_soft'], 'fg': THEME['accent_text'],
-                'hover': '#243456', 'active': '#1a2744',
-                'disabled_bg': THEME['panel'], 'disabled_fg': THEME['fg_dim'],
-            },
-        }
-        return palettes.get(style, palettes['primary'])
-
-    def _paint(self, bg, fg=None):
-        self.configure(bg=bg)
-        self.btn.configure(bg=bg, fg=fg if fg is not None else self.btn.cget('fg'))
-
-    def _on_enter(self, _e=None):
-        if self._enabled:
-            self._paint(self._colors['hover'], self._colors['fg'])
-
-    def _on_leave(self, _e=None):
-        if self._enabled:
-            self._paint(self._colors['bg'], self._colors['fg'])
-
-    def _on_press(self, _e=None):
-        if self._enabled:
-            self._paint(self._colors['active'], self._colors['fg'])
-
-    def _on_release(self, _e=None):
-        if self._enabled:
-            self._paint(self._colors['hover'], self._colors['fg'])
-            if self.command:
-                self.command()
-
-    def config(self, **kwargs):
-        self.configure(**kwargs)
-
-    def configure(self, cnf=None, **kwargs):
-        if cnf and isinstance(cnf, dict):
-            kwargs = {**cnf, **kwargs}
-        if 'text' in kwargs:
-            self._text = kwargs.pop('text')
-            self.btn.configure(text=self._text)
-        if 'command' in kwargs:
-            self.command = kwargs.pop('command')
-        if 'state' in kwargs:
-            state = kwargs.pop('state')
-            self._enabled = state != tk.DISABLED and str(state).lower() != 'disabled'
-            if self._enabled:
-                self.btn.configure(cursor='hand2')
-                self._paint(self._colors['bg'], self._colors['fg'])
-            else:
-                self.btn.configure(cursor='arrow')
-                self._paint(self._colors['disabled_bg'], self._colors['disabled_fg'])
-        if kwargs:
-            super().configure(**kwargs)
-
-    def cget(self, key):
-        if key == 'text':
-            return self._text
-        return super().cget(key)
+def _nice_ticks(vmin, vmax, count=5):
+    if vmax <= vmin:
+        vmin, vmax = 0.0, 1.0
+    span = vmax - vmin
+    step_raw = span / count
+    if step_raw <= 0:
+        return [vmin]
+    mag = 10 ** math.floor(math.log10(step_raw))
+    norm = step_raw / mag
+    if norm < 1.5:
+        step = 1
+    elif norm < 3:
+        step = 2
+    elif norm < 7:
+        step = 5
+    else:
+        step = 10
+    step *= mag
+    start = math.ceil(vmin / step) * step
+    ticks = []
+    v = start
+    while v <= vmax + step * 1e-9:
+        ticks.append(v)
+        v += step
+    return ticks
 
 
-class Card(tk.Frame):
-    """带边框的卡片容器"""
-
-    def __init__(self, parent, pad=12, **kwargs):
-        bg = kwargs.pop('bg', THEME['card'])
-        super().__init__(
-            parent, bg=bg, highlightbackground=THEME['border'],
-            highlightthickness=1, bd=0, **kwargs
-        )
-        self.inner = tk.Frame(self, bg=bg)
-        self.inner.pack(fill=tk.BOTH, expand=True, padx=pad, pady=pad)
+def _fmt_num(v):
+    if abs(v) >= 1000 or abs(v) < 0.01:
+        return f"{v:g}"
+    if v == int(v):
+        return str(int(v))
+    return f"{v:.1f}"
 
 
-class ModernEntry(tk.Frame):
-    """带标签的输入框"""
+class HistogramWidget(QWidget):
+    """纯 QPainter 自绘分布直方图：柱状频次 + 正态曲线 + 规格限 + 均值。"""
 
-    def __init__(self, parent, label='', default='', placeholder='', **kwargs):
-        super().__init__(parent, bg=parent.cget('bg'), **kwargs)
-        if label:
-            tk.Label(
-                self, text=label, bg=self.cget('bg'), fg=THEME['fg_muted'],
-                font=(FONT_UI, 9), anchor='w'
-            ).pack(fill=tk.X, pady=(0, 4))
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumSize(320, 240)
+        self._stats = None
+        self._title = ""
+        self._subtitle = ""
+        self._bars = []
+        self._bar_edges = []
+        self._curve = []
+        self._x_lo = 0.0
+        self._x_hi = 1.0
+        self._y_max = 1.0
+        self._markers = []
 
-        self.box = tk.Frame(self, bg=THEME['border'], bd=0)
-        self.box.pack(fill=tk.X)
-        self.entry = tk.Entry(
-            self.box, bg=THEME['input_bg'], fg=THEME['fg'],
-            insertbackground=THEME['accent'], relief=tk.FLAT,
-            font=(FONT_MONO, 11), bd=0
-        )
-        self.entry.pack(fill=tk.X, ipady=8, padx=1, pady=1)
-        if default:
-            self.entry.insert(0, default)
+    def reset(self):
+        self._stats = None
+        self._bars = []
+        self._bar_edges = []
+        self._curve = []
+        self._markers = []
+        self._title = ""
+        self._subtitle = ""
+        self.update()
 
-        self.entry.bind('<FocusIn>', self._focus_in)
-        self.entry.bind('<FocusOut>', self._focus_out)
+    def set_data(self, data, stats):
+        self._stats = stats
+        mu = stats['Mean']
+        sigma = stats['StdDev']
+        usl = stats['USL']
+        lsl = stats['LSL']
+        if sigma is None or sigma <= 1e-9:
+            self.reset()
+            return
+        hist, edges = np.histogram(data, bins=30, density=True)
+        self._bars = list(hist)
+        self._bar_edges = list(edges)
+        xmin, xmax = float(np.min(data)), float(np.max(data))
+        base_span = 6.0 * sigma
+        lo = (lsl - base_span * 0.2) if lsl is not None else min(xmin, mu - 4 * sigma)
+        hi = (usl + base_span * 0.2) if usl is not None else max(xmax, mu + 4 * sigma)
+        if hi <= lo:
+            hi = lo + 1.0
+        self._x_lo = float(lo)
+        self._x_hi = float(hi)
+        xs = np.linspace(lo, hi, 300)
+        ys = norm.pdf(xs, mu, sigma)
+        self._curve = [(float(x), float(y)) for x, y in zip(xs, ys)]
+        self._y_max = max(float(np.max(hist)), 1e-9)
+        if len(ys):
+            self._y_max = max(self._y_max, float(np.max(ys)) * 1.25)
+        self._markers = []
+        if usl is not None:
+            self._markers.append((float(usl), "USL"))
+        if lsl is not None:
+            self._markers.append((float(lsl), "LSL"))
+        self._markers.append((float(mu), "μ"))
+        cpk = stats.get('Cpk')
+        level = stats.get('CPK_LEVEL', '')
+        self._title = f"Cpk = {cpk:.3f}" if cpk is not None else "Cpk = -"
+        self._subtitle = level
+        self.update()
 
-    def _focus_in(self, _e=None):
-        self.box.configure(bg=THEME['focus'])
+    def _tick_font(self):
+        f = QFont(self.font())
+        f.setPointSizeF(max(7.0, f.pointSizeF() - 0.5))
+        return f
 
-    def _focus_out(self, _e=None):
-        self.box.configure(bg=THEME['border'])
+    def _draw_title(self, p):
+        f = QFont(self.font())
+        f.setBold(True)
+        f.setPointSizeF(f.pointSizeF() + 1.5)
+        p.setFont(f)
+        p.setPen(QColor(C_FG))
+        p.drawText(QRectF(0, 6, self.width(), 22),
+                   Qt.AlignmentFlag.AlignHCenter, self._title)
+        if self._subtitle:
+            p.setFont(self._tick_font())
+            p.setPen(QColor(C_FG_MUTED))
+            p.drawText(QRectF(0, 24, self.width(), 16),
+                       Qt.AlignmentFlag.AlignHCenter, self._subtitle)
 
-    def get(self):
-        return self.entry.get()
+    def _draw_axes(self, p, plot):
+        f = self._tick_font()
+        p.setFont(f)
+        fm = QFontMetrics(f)
+        for t in _nice_ticks(0, self._y_max, 5):
+            y = plot.bottom() - (t / self._y_max) * plot.height()
+            p.setPen(QPen(QColor(C_GRID), 1))
+            p.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y))
+            p.setPen(QColor(C_FG_MUTED))
+            p.drawText(QRectF(0, y - 9, plot.left() - 8, 18),
+                       Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                       _fmt_num(t))
+        for t in _nice_ticks(self._x_lo, self._x_hi, 5):
+            x = plot.left() + (t - self._x_lo) / (self._x_hi - self._x_lo) * plot.width()
+            p.setPen(QPen(QColor(C_GRID), 1))
+            p.drawLine(QPointF(x, plot.bottom()), QPointF(x, plot.top()))
+            p.setPen(QColor(C_FG_MUTED))
+            p.drawText(QRectF(x - 44, plot.bottom() + 6, 88, 18),
+                       Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+                       _fmt_num(t))
+        _ = fm
 
-    def delete(self, *args):
-        self.entry.delete(*args)
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.fillRect(self.rect(), QColor(C_BG))
+        if self._stats is None:
+            f = QFont(self.font())
+            f.setPointSizeF(f.pointSizeF() + 1)
+            p.setFont(f)
+            p.setPen(QColor(C_FG_DIM))
+            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
+                       "等待数据…\n在左侧输入测量值或导入 Excel")
+            p.end()
+            return
+        r = self.rect()
+        fm = QFontMetrics(self._tick_font())
+        left = fm.horizontalAdvance("-888.8") + 30
+        right = 14
+        top = 44
+        bottom = fm.height() + 30
+        plot = QRectF(r.left() + left, r.top() + top,
+                      r.width() - left - right, r.height() - top - bottom)
+        if plot.width() < 40 or plot.height() < 40:
+            p.end()
+            return
+        self._draw_title(p)
+        self._draw_axes(p, plot)
+        span = self._x_hi - self._x_lo
+        for i, h in enumerate(self._bars):
+            e0 = self._bar_edges[i]
+            e1 = self._bar_edges[i + 1]
+            x0 = plot.left() + (e0 - self._x_lo) / span * plot.width()
+            x1 = plot.left() + (e1 - self._x_lo) / span * plot.width()
+            y0 = plot.bottom() - (h / self._y_max) * plot.height()
+            c = QColor(C_ACCENT_LIGHT)
+            c.setAlpha(150)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(c)
+            p.drawRoundedRect(QRectF(x0, y0, max(1.0, x1 - x0),
+                                     plot.bottom() - y0), 1, 1)
+        if len(self._curve) >= 2:
+            pts = QPolygonF()
+            for x, y in self._curve:
+                px = plot.left() + (x - self._x_lo) / span * plot.width()
+                py = plot.bottom() - (y / self._y_max) * plot.height()
+                pts.append(QPointF(px, py))
+            path = QPainterPath(pts.first())
+            for pt in pts:
+                path.lineTo(pt)
+            path.lineTo(pts.last().x(), plot.bottom())
+            path.lineTo(pts.first().x(), plot.bottom())
+            path.closeSubpath()
+            fc = QColor(C_SUCCESS)
+            fc.setAlpha(45)
+            p.fillPath(path, fc)
+            pen = QPen(QColor(C_SUCCESS), 2.0)
+            p.setPen(pen)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawPolyline(pts)
+        for x, label in self._markers:
+            px = plot.left() + (x - self._x_lo) / span * plot.width()
+            if px < plot.left() or px > plot.right():
+                continue
+            is_spec = label in ("USL", "LSL")
+            color = QColor(C_DANGER) if is_spec else QColor(C_WARNING)
+            pen = QPen(color, 1.6)
+            pen.setStyle(Qt.PenStyle.DashLine if is_spec else Qt.PenStyle.SolidLine)
+            p.setPen(pen)
+            p.drawLine(QPointF(px, plot.top()), QPointF(px, plot.bottom()))
+            p.setFont(self._tick_font())
+            p.setPen(color)
+            label_y = plot.top() + 8 if label != "LSL" else plot.bottom() - 12
+            p.drawText(QRectF(px - 40, label_y - 9, 80, 18),
+                       Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
+                       label)
+        p.save()
+        p.translate(14, plot.top() + plot.height() / 2)
+        p.rotate(-90)
+        p.setFont(self._tick_font())
+        p.setPen(QColor(C_FG_MUTED))
+        p.drawText(QRectF(-60, -10, 120, 20),
+                   Qt.AlignmentFlag.AlignCenter, "概率密度")
+        p.restore()
+        p.setFont(self._tick_font())
+        p.setPen(QColor(C_FG_MUTED))
+        p.drawText(QRectF(plot.left(), plot.bottom() + 8, plot.width(), 18),
+                   Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+                   "测量值")
+        p.end()
 
-    def insert(self, *args):
-        self.entry.insert(*args)
 
-    def bind(self, *args, **kwargs):
-        return self.entry.bind(*args, **kwargs)
+class MetricChip(QFrame):
+    """指标小卡片：标签 + 大号数值。"""
 
+    def __init__(self, label='', value='-', parent=None):
+        super().__init__(parent)
+        self.setObjectName("MetricChip")
+        self.setStyleSheet(f"#MetricChip {{ background-color: {C_CARD};"
+                           f" border: 1px solid {C_BORDER}; border-radius: 8px; }}")
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(8, 5, 8, 5)
+        lay.setSpacing(1)
+        l = QLabel(label)
+        l.setStyleSheet("color: #9D9D9D; font-size: 10px; background: transparent;")
+        lay.addWidget(l)
+        self.value_lbl = QLabel(value)
+        self._set_value_style(C_FG)
+        lay.addWidget(self.value_lbl)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding,
+                           QSizePolicy.Policy.Expanding)
 
-class SectionTitle(tk.Frame):
-    def __init__(self, parent, text='', icon='', **kwargs):
-        super().__init__(parent, bg=parent.cget('bg'), **kwargs)
-        row = tk.Frame(self, bg=self.cget('bg'))
-        row.pack(fill=tk.X)
-        if icon:
-            tk.Label(row, text=icon, bg=self.cget('bg'), fg=THEME['accent'],
-                     font=(FONT_UI, 12)).pack(side=tk.LEFT, padx=(0, 6))
-        tk.Label(row, text=text, bg=self.cget('bg'), fg=THEME['fg'],
-                 font=(FONT_UI, 12, 'bold')).pack(side=tk.LEFT)
-        tk.Frame(self, bg=THEME['border_soft'], height=1).pack(fill=tk.X, pady=(8, 0))
-
-
-class MetricChip(tk.Frame):
-    """指标小卡片"""
-
-    def __init__(self, parent, label='', value='-', **kwargs):
-        super().__init__(
-            parent, bg=THEME['elevated'], highlightbackground=THEME['border_soft'],
-            highlightthickness=1, bd=0, **kwargs
-        )
-        tk.Label(
-            self, text=label, bg=THEME['elevated'], fg=THEME['fg_muted'],
-            font=(FONT_UI, 8), anchor='w'
-        ).pack(fill=tk.X, padx=10, pady=(8, 0))
-        self.value_lbl = tk.Label(
-            self, text=value, bg=THEME['elevated'], fg=THEME['fg'],
-            font=(FONT_MONO, 11, 'bold'), anchor='w'
-        )
-        self.value_lbl.pack(fill=tk.X, padx=10, pady=(2, 8))
+    def _set_value_style(self, color):
+        self.value_lbl.setStyleSheet(
+            f"color: {color}; font-size: 13px; font-weight: 700;"
+            " background: transparent;")
 
     def set_value(self, text, color=None):
-        self.value_lbl.configure(text=text, fg=color or THEME['fg'])
+        self.value_lbl.setText(text)
+        self._set_value_style(color or C_FG)
 
 
-# ==========================================
-# 3. 核心计算
-# ==========================================
+class ClickableLabel(QLabel):
+    """带悬停样式与点击信号的文本标签。"""
+
+    clicked = Signal()
+
+    def __init__(self, text='', idle='', hover='', parent=None):
+        super().__init__(text, parent)
+        self._idle = idle
+        self._hover = hover
+        self.setStyleSheet(idle)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def enterEvent(self, event):
+        if self._hover:
+            self.setStyleSheet(self._hover)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        if self._idle:
+            self.setStyleSheet(self._idle)
+        super().leaveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
+
+
+def show_msg(parent, title, msg, is_error=True):
+    if is_error:
+        FluentMessageBox.error(parent, title, msg)
+    else:
+        FluentMessageBox.success(parent, title, msg)
+
+
 class CpkCalculator:
     @staticmethod
     def calculate(data, usl, lsl):
@@ -418,69 +499,11 @@ class CpkCalculator:
         return np.round(np.random.normal(target_mean, sigma, count), decimals)
 
 
-# ==========================================
-# 4. 消息对话框
-# ==========================================
-def show_msg(parent, title, msg, is_error=True):
-    dlg = tk.Toplevel(parent)
-    dlg.title(title)
-    dlg.configure(bg=THEME['panel'])
-    dlg.resizable(False, False)
-    dlg.transient(parent)
-    dlg.grab_set()
-    dlg.configure(highlightbackground=THEME['border'], highlightthickness=1)
-
-    color = THEME['danger'] if is_error else THEME['success']
-    soft = THEME['danger_soft'] if is_error else THEME['success_soft']
-    icon = "!" if is_error else "✓"
-
-    top = tk.Frame(dlg, bg=THEME['panel'])
-    top.pack(fill=tk.X, padx=24, pady=(22, 10))
-
-    badge = tk.Label(
-        top, text=icon, bg=soft, fg=color, font=(FONT_UI, 14, 'bold'),
-        width=3, height=1
-    )
-    badge.pack(side=tk.LEFT, padx=(0, 12))
-    tk.Label(
-        top, text=title, font=(FONT_UI, 13, 'bold'),
-        bg=THEME['panel'], fg=THEME['fg']
-    ).pack(side=tk.LEFT)
-
-    msg_frame = tk.Frame(dlg, bg=THEME['panel'])
-    msg_frame.pack(fill=tk.BOTH, expand=True, padx=28, pady=(0, 18))
-    tk.Label(
-        msg_frame, text=msg, font=(FONT_UI, 10), bg=THEME['panel'],
-        fg=THEME['fg_muted'], wraplength=440, justify=tk.LEFT
-    ).pack(anchor='w')
-
-    btn_frame = tk.Frame(dlg, bg=THEME['card'])
-    btn_frame.pack(fill=tk.X)
-    inner = tk.Frame(btn_frame, bg=THEME['card'])
-    inner.pack(pady=12)
-    ModernButton(inner, text="确定", command=dlg.destroy, style='primary').pack()
-
-    dlg.update_idletasks()
-    pw, ph = parent.winfo_width(), parent.winfo_height()
-    px = parent.winfo_x() + max(0, (pw - dlg.winfo_width()) // 2)
-    py = parent.winfo_y() + max(0, (ph - dlg.winfo_height()) // 2)
-    dlg.geometry(f"+{px}+{py}")
-
-    dlg.bind('<Return>', lambda e: dlg.destroy())
-    dlg.bind('<Escape>', lambda e: dlg.destroy())
-    dlg.focus_force()
-    dlg.wait_window()
-
-
-class CpkApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("CPK 统计分析工具 Pro")
-        self.root.geometry("1600x900")
-        self.root.state('zoomed')
-        self.root.configure(bg=THEME['bg'])
-        self.root.minsize(1200, 720)
-        self._set_dark_titlebar()
+class CpkApp(FluentWindow):
+    def __init__(self):
+        super().__init__(title="CPK 统计分析工具 Pro", width=1360, height=820)
+        self.root = self
+        self.setMinimumSize(1024, 640)
 
         self.app_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -492,304 +515,352 @@ class CpkApp:
 
         self.excel_projects = []
         self.current_excel_index = -1
+        self._debug_tab_active = False
 
-        self.setup_styles()
         self.setup_ui()
-        self.root.bind('<Control-Shift-D>', self._show_debug_prompt)
+        QShortcut(QKeySequence("Ctrl+Shift+D"), self,
+                  activated=self._show_debug_prompt)
 
-    def setup_styles(self):
-        style = ttk.Style()
-        style.theme_use('clam')
+    def _set_dark_titlebar(self):
+        try:
+            DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+            hwnd = int(self.winId())
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE,
+                ctypes.byref(ctypes.c_int(1)),
+                ctypes.sizeof(ctypes.c_int(1)))
+        except Exception:
+            pass
 
-        style.configure(
-            "Modern.TNotebook",
-            background=THEME['panel'],
-            borderwidth=0,
-            tabmargins=[0, 0, 0, 0]
-        )
-        style.configure(
-            "Modern.TNotebook.Tab",
-            background=THEME['elevated'],
-            foreground=THEME['fg_muted'],
-            padding=[18, 10],
-            font=(FONT_UI, 10),
-            borderwidth=0,
-            lightcolor=THEME['panel'],
-            darkcolor=THEME['panel'],
-            focuscolor=THEME['panel'],
-        )
-        style.map(
-            "Modern.TNotebook.Tab",
-            background=[("selected", THEME['accent_soft']), ("active", THEME['card_hover'])],
-            foreground=[("selected", THEME['accent_text']), ("active", THEME['fg'])],
-        )
+    def _section_label(self, text):
+        lbl = QLabel(text)
+        lbl.setStyleSheet("color: #FFFFFF; font-size: 13px; font-weight: 700;")
+        return lbl
 
-        style.configure(
-            "Modern.Treeview",
-            background=THEME['input_bg'],
-            foreground=THEME['fg'],
-            fieldbackground=THEME['input_bg'],
-            rowheight=32,
-            font=(FONT_UI, 9),
-            borderwidth=0,
-            relief='flat',
-        )
-        style.map(
-            "Modern.Treeview",
-            background=[('selected', THEME['accent_soft'])],
-            foreground=[('selected', THEME['accent_text'])],
-        )
-        style.configure(
-            "Modern.Treeview.Heading",
-            background=THEME['elevated'],
-            foreground=THEME['fg_muted'],
-            font=(FONT_UI, 9, 'bold'),
-            relief='flat',
-            borderwidth=0,
-            padding=6,
-        )
-        style.map(
-            "Modern.Treeview.Heading",
-            background=[('active', THEME['card_hover'])],
-            foreground=[('active', THEME['fg'])],
-        )
-        style.configure(
-            "Modern.Vertical.TScrollbar",
-            background=THEME['elevated'],
-            troughcolor=THEME['input_bg'],
-            bordercolor=THEME['input_bg'],
-            arrowcolor=THEME['fg_muted'],
-            relief='flat',
-        )
-        style.map(
-            "Modern.Vertical.TScrollbar",
-            background=[('active', THEME['border']), ('pressed', THEME['accent'])],
-        )
+    def _caption_label(self, text):
+        lbl = QLabel(text)
+        lbl.setStyleSheet("color: #6E6E6E; font-size: 10px;")
+        return lbl
+
+    def _danger_label(self, text):
+        lbl = QLabel(text)
+        lbl.setStyleSheet("color: #E74856; font-size: 11px;")
+        return lbl
 
     def setup_ui(self):
-        # 顶部栏
+        central = QWidget()
+        root_lay = QVBoxLayout(central)
+        root_lay.setContentsMargins(10, 10, 10, 10)
+        root_lay.setSpacing(10)
+
         self._build_topbar()
+        root_lay.addWidget(self._topbar)
 
-        main = tk.Frame(self.root, bg=THEME['bg'])
-        main.pack(fill=tk.BOTH, expand=True, padx=14, pady=(0, 14))
+        main = QHBoxLayout()
+        main.setSpacing(10)
 
-        # 三栏布局
-        left = tk.Frame(main, bg=THEME['panel'], width=520, highlightbackground=THEME['border'], highlightthickness=1)
-        left.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
-        left.pack_propagate(False)
+        left = QFrame()
+        left.setObjectName("LeftPanel")
+        left.setStyleSheet(
+            f"#LeftPanel {{ background-color: {C_PANEL};"
+            f" border: 1px solid {C_BORDER}; border-radius: 10px; }}")
 
-        right = tk.Frame(main, bg=THEME['panel'], width=360, highlightbackground=THEME['border'], highlightthickness=1)
-        right.pack(side=tk.RIGHT, fill=tk.Y, padx=(10, 0))
-        right.pack_propagate(False)
+        center = QWidget()
 
-        center = tk.Frame(main, bg=THEME['panel'], highlightbackground=THEME['border'], highlightthickness=1)
-        center.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        right = QFrame()
+        right.setObjectName("RightPanel")
+        right.setStyleSheet(
+            f"#RightPanel {{ background-color: {C_PANEL};"
+            f" border: 1px solid {C_BORDER}; border-radius: 10px; }}")
+
+        main.addWidget(left, 1)
+        main.addWidget(center, 2)
+        main.addWidget(right, 1)
+        root_lay.addLayout(main, 1)
+
+        self.setCentralWidget(central)
 
         self.init_left_panel(left)
         self.init_stats_panel(right)
         self.init_chart_panel(center)
 
     def _build_topbar(self):
-        bar = tk.Frame(self.root, bg=THEME['panel'], height=56, highlightbackground=THEME['border'], highlightthickness=1)
-        bar.pack(fill=tk.X, padx=14, pady=14)
-        bar.pack_propagate(False)
+        bar = QFrame()
+        bar.setObjectName("TopBar")
+        bar.setStyleSheet(
+            f"#TopBar {{ background-color: {C_PANEL};"
+            f" border: 1px solid {C_BORDER}; border-radius: 10px; }}")
+        bar.setFixedHeight(44)
+        lay = QHBoxLayout(bar)
+        lay.setContentsMargins(14, 4, 14, 4)
+        lay.setSpacing(10)
 
-        left = tk.Frame(bar, bg=THEME['panel'])
-        left.pack(side=tk.LEFT, fill=tk.Y, padx=16)
+        logo = QLabel("CPK")
+        logo.setStyleSheet(
+            "background-color: #0067C0; color: #FFFFFF; font-weight: 700;"
+            " padding: 4px 10px; border-radius: 6px;")
+        lay.addWidget(logo)
 
-        logo = tk.Label(
-            left, text="CPK", bg=THEME['accent'], fg='#ffffff',
-            font=(FONT_UI, 11, 'bold'), padx=10, pady=4
-        )
-        logo.pack(side=tk.LEFT, pady=12)
-        titles = tk.Frame(left, bg=THEME['panel'])
-        titles.pack(side=tk.LEFT, padx=12, pady=10)
-        tk.Label(
-            titles, text="过程能力分析", bg=THEME['panel'], fg=THEME['fg'],
-            font=(FONT_UI, 13, 'bold')
-        ).pack(anchor='w')
-        tk.Label(
-            titles, text="Statistical Process Capability · Pro", bg=THEME['panel'],
-            fg=THEME['fg_dim'], font=(FONT_UI, 8)
-        ).pack(anchor='w')
+        titles = QVBoxLayout()
+        titles.setSpacing(0)
+        t = QLabel("过程能力分析")
+        t.setStyleSheet("color: #FFFFFF; font-size: 13px; font-weight: 700;")
+        s = QLabel("Statistical Process Capability · Pro")
+        s.setStyleSheet("color: #6E6E6E; font-size: 9px;")
+        titles.addWidget(t)
+        titles.addWidget(s)
+        lay.addLayout(titles)
 
-        right = tk.Frame(bar, bg=THEME['panel'])
-        right.pack(side=tk.RIGHT, padx=16)
-        about = tk.Label(
-            right, text="关于", bg=THEME['elevated'], fg=THEME['fg_muted'],
-            font=(FONT_UI, 9), cursor='hand2', padx=12, pady=6
-        )
-        about.pack(side=tk.RIGHT, pady=12)
-        about.bind('<Button-1>', lambda e: self.show_about())
-        about.bind('<Enter>', lambda e: about.configure(fg=THEME['fg'], bg=THEME['card_hover']))
-        about.bind('<Leave>', lambda e: about.configure(fg=THEME['fg_muted'], bg=THEME['elevated']))
+        lay.addStretch(1)
 
-        self._status_chip = tk.Label(
-            right, text="就绪", bg=THEME['success_soft'], fg=THEME['success'],
-            font=(FONT_UI, 9), padx=12, pady=6
-        )
-        self._status_chip.pack(side=tk.RIGHT, padx=(0, 10), pady=12)
+        self._status_chip = QLabel("就绪")
+        self._status_chip.setStyleSheet(self._status_style('ok'))
+        lay.addWidget(self._status_chip)
 
-    def set_status(self, text, kind='ok'):
+        idle = "color: #9D9D9D; padding: 4px 10px; background-color: #2B2B2B; border-radius: 6px; font-size: 11px;"
+        hover = "color: #FFFFFF; padding: 4px 10px; background-color: #3F3F3F; border-radius: 6px; font-size: 11px;"
+        about = ClickableLabel("关于", idle=idle, hover=hover)
+        about.clicked.connect(self.show_about)
+        lay.addWidget(about)
+
+        self._topbar = bar
+
+    def _status_style(self, kind):
         colors = {
-            'ok': (THEME['success_soft'], THEME['success']),
-            'warn': (THEME['warning_soft'], THEME['warning']),
-            'err': (THEME['danger_soft'], THEME['danger']),
-            'info': (THEME['accent_soft'], THEME['accent_text']),
+            'ok': ('#123F1E', C_SUCCESS),
+            'warn': ('#3A2E0F', C_WARNING),
+            'err': ('#3A1717', C_DANGER),
+            'info': ('#1A2C44', C_ACCENT_LIGHT),
         }
         bg, fg = colors.get(kind, colors['ok'])
-        self._status_chip.configure(text=text, bg=bg, fg=fg)
+        return (f"background-color: {bg}; color: {fg}; border-radius: 10px;"
+                " padding: 4px 12px; font-size: 12px;")
+
+    def set_status(self, text, kind='ok'):
+        self._status_chip.setText(text)
+        self._status_chip.setStyleSheet(self._status_style(kind))
 
     def init_left_panel(self, parent):
-        header = tk.Frame(parent, bg=THEME['panel'])
-        header.pack(fill=tk.X, padx=16, pady=(16, 8))
-        tk.Label(
-            header, text="控制台", bg=THEME['panel'], fg=THEME['fg'],
-            font=(FONT_UI, 14, 'bold')
-        ).pack(anchor='w')
-        tk.Label(
-            header, text="配置项目、输入数据或导入 Excel", bg=THEME['panel'],
-            fg=THEME['fg_dim'], font=(FONT_UI, 9)
-        ).pack(anchor='w', pady=(2, 0))
+        lay = QVBoxLayout(parent)
+        lay.setContentsMargins(12, 10, 12, 10)
+        lay.setSpacing(8)
 
-        # 项目名称卡片
-        proj_card = Card(parent, pad=12)
-        proj_card.pack(fill=tk.X, padx=14, pady=(4, 10))
-        tk.Label(
-            proj_card.inner, text="项目名称", bg=THEME['card'], fg=THEME['fg_muted'],
-            font=(FONT_UI, 9)
-        ).pack(anchor='w')
-        box = tk.Frame(proj_card.inner, bg=THEME['border'])
-        box.pack(fill=tk.X, pady=(6, 0))
-        self.inp_project = tk.Entry(
-            box, bg=THEME['input_bg'], fg=THEME['fg'], insertbackground=THEME['accent'],
-            relief=tk.FLAT, font=(FONT_UI, 11), bd=0
-        )
-        self.inp_project.pack(fill=tk.X, ipady=8, padx=1, pady=1)
-        self.inp_project.insert(0, "未命名项目")
-        self.inp_project.bind('<FocusIn>', lambda e: box.configure(bg=THEME['focus']))
-        self.inp_project.bind('<FocusOut>', lambda e: box.configure(bg=THEME['border']))
+        proj_card = FluentCard()
+        pl = QLabel("项目名称")
+        pl.setStyleSheet("color: #9D9D9D; font-size: 12px;")
+        self.inp_project = FluentLineEdit("未命名项目")
+        proj_row = QWidget()
+        pr = QHBoxLayout(proj_row)
+        pr.setContentsMargins(0, 0, 0, 0)
+        pr.setSpacing(10)
+        pr.addWidget(pl)
+        pr.addWidget(self.inp_project, 1)
+        proj_card.addWidget(proj_row)
+        lay.addWidget(proj_card)
 
-        # Notebook
-        nb_wrap = tk.Frame(parent, bg=THEME['panel'])
-        nb_wrap.pack(fill=tk.BOTH, expand=True, padx=14, pady=(0, 8))
-
-        nb = ttk.Notebook(nb_wrap, style="Modern.TNotebook")
-        nb.pack(fill=tk.BOTH, expand=True)
-
-        t1 = tk.Frame(nb, bg=THEME['panel'])
-        t3 = tk.Frame(nb, bg=THEME['panel'])
-        nb.add(t1, text='  数据分析  ')
-        nb.add(t3, text='  Excel 导入  ')
-
+        self.main_notebook = FluentTabWidget()
+        t1 = QWidget()
+        t3 = QWidget()
+        self.main_notebook.addTab(t1, "数据分析")
+        self.main_notebook.addTab(t3, "Excel 导入")
         self.setup_tab1(t1)
         self.setup_tab3(t3)
-
-        self._notebook = nb
-        self._debug_tab_active = False
-        self.main_notebook = nb
-
-        # 导出区
-        export_card = Card(parent, pad=12)
-        export_card.pack(fill=tk.X, padx=14, pady=(0, 10))
-        tk.Label(
-            export_card.inner, text="导出报告", bg=THEME['card'], fg=THEME['fg_muted'],
-            font=(FONT_UI, 9)
-        ).pack(anchor='w', pady=(0, 8))
-
-        self.btn_export = ModernButton(
-            export_card.inner, text="导出当前报告 (PDF)", style='success',
-            command=self.export_report, height=52, font=(FONT_UI, 12, 'bold')
-        )
-        self.btn_export.pack(fill=tk.X, pady=(0, 6))
-
-        self.btn_batch_export = ModernButton(
-            export_card.inner, text="合并导出全部 PDF", style='primary',
-            command=self.export_merged_report, height=52, font=(FONT_UI, 12, 'bold')
-        )
-        # 常驻显示（无数据时点击会提示先导入 Excel），不再依赖 tab 切换事件
-        self.btn_batch_export.pack(fill=tk.X, pady=(0, 6))
-
-        if not REPORTLAB_AVAILABLE:
-            self.btn_export.configure(state=tk.DISABLED, text="缺少 reportlab")
-            self.btn_batch_export.configure(state=tk.DISABLED, text="缺少 reportlab")
-            tk.Label(
-                export_card.inner, text="pip install reportlab", bg=THEME['card'],
-                fg=THEME['fg_dim'], font=(FONT_UI, 8)
-            ).pack(anchor='w')
+        self._notebook = self.main_notebook
+        lay.addWidget(self.main_notebook, 1)
 
         if not PANDAS_AVAILABLE:
-            tk.Label(
-                parent, text="缺少 pandas/openpyxl，Excel 导入不可用",
-                bg=THEME['panel'], fg=THEME['danger'], font=(FONT_UI, 9)
-            ).pack(pady=(0, 6))
+            lay.addWidget(self._danger_label("缺少 pandas/openpyxl，Excel 导入不可用"))
 
-        nb.bind("<<NotebookTabChanged>>", self.on_tab_changed)
+        export_card = FluentCard()
+        el = QLabel("导出报告")
+        el.setStyleSheet("color: #9D9D9D; font-size: 12px;")
+        export_card.addWidget(el)
+        self.btn_export = FluentButton("导出当前 PDF", variant="accent")
+        self.btn_export.clicked.connect(self.export_report)
+        self.btn_batch_export = FluentButton("合并全部 PDF")
+        self.btn_batch_export.clicked.connect(self.export_merged_report)
+        btn_row = QWidget()
+        br = QHBoxLayout(btn_row)
+        br.setContentsMargins(0, 0, 0, 0)
+        br.setSpacing(8)
+        br.addWidget(self.btn_export, 1)
+        br.addWidget(self.btn_batch_export, 1)
+        export_card.addWidget(btn_row)
+        lay.addWidget(export_card)
 
-        self._debug_btn = tk.Label(
-            parent, text="调试模式", bg=THEME['panel'], fg=THEME['fg_dim'],
-            font=(FONT_UI, 8), cursor="hand2"
-        )
-        self._debug_btn.pack(side=tk.BOTTOM, pady=(0, 12))
-        self._debug_btn.bind("<Button-1>", lambda e: self._toggle_debug())
-        self._debug_btn.bind("<Enter>", lambda e: self._debug_btn.configure(fg=THEME['fg_muted']))
-        self._debug_btn.bind("<Leave>", lambda e: self._debug_btn.configure(
-            fg=THEME['success'] if self._debug_tab_active else THEME['fg_dim']
-        ))
+        if not REPORTLAB_AVAILABLE:
+            self.btn_export.setEnabled(False)
+            self.btn_export.setText("缺少 reportlab")
+            self.btn_batch_export.setEnabled(False)
+            self.btn_batch_export.setText("缺少 reportlab")
+            lay.addWidget(self._caption_label("pip install reportlab"))
 
-    def on_tab_changed(self, event):
-        # 批量导出按钮已常驻显示，这里只管理"导出当前报告"按钮的可用状态
-        selected_tab = event.widget.tab('current')['text']
-        if "Excel" in selected_tab:
-            if self.excel_projects and self.current_excel_index != -1:
-                self.btn_export.configure(state=tk.NORMAL)
-            else:
-                self.btn_export.configure(state=tk.DISABLED)
-        else:
-            if self.current_stats:
-                self.btn_export.configure(state=tk.NORMAL)
-            else:
-                self.btn_export.configure(state=tk.DISABLED)
+        self.main_notebook.currentChanged.connect(self.on_tab_changed)
+
+        self._debug_btn = ClickableLabel(
+            "调试模式",
+            idle="color: #6E6E6E; font-size: 11px; padding: 4px;",
+            hover="color: #9D9D9D; font-size: 11px; padding: 4px;")
+        self._debug_btn.clicked.connect(self._toggle_debug)
+        lay.addWidget(self._debug_btn, 0, Qt.AlignmentFlag.AlignHCenter)
+
+    def create_input(self, layout, label, default=""):
+        return self._single_input(layout, label, default)
+
+    def _single_input(self, layout, label, default=""):
+        wrap = QWidget()
+        vl = QVBoxLayout(wrap)
+        vl.setContentsMargins(0, 0, 0, 0)
+        vl.setSpacing(2)
+        lbl = QLabel(label)
+        lbl.setStyleSheet("color: #9D9D9D; font-size: 11px;")
+        vl.addWidget(lbl)
+        e = FluentLineEdit()
+        e.setMinimumHeight(28)
+        if default:
+            e.setText(str(default))
+        vl.addWidget(e)
+        layout.addWidget(wrap, 1)
+        return e
+
+    def _pair_inputs(self, layout, spec1, spec2):
+        wrap = QWidget()
+        hl = QHBoxLayout(wrap)
+        hl.setContentsMargins(0, 0, 0, 0)
+        hl.setSpacing(8)
+        e1 = self._single_input(hl, spec1[0], spec1[1] if len(spec1) > 1 else "")
+        e2 = self._single_input(hl, spec2[0], spec2[1] if len(spec2) > 1 else "")
+        layout.addWidget(wrap)
+        return e1, e2
+
+    def create_btn_bar(self, layout, cmd1, cmd2, lbl1):
+        box = QHBoxLayout()
+        box.setSpacing(8)
+        b1 = FluentButton(lbl1, variant="accent")
+        b1.setMinimumHeight(30)
+        b1.clicked.connect(cmd1)
+        b2 = FluentButton("清空")
+        b2.setMinimumHeight(30)
+        b2.clicked.connect(cmd2)
+        box.addWidget(b1, 3)
+        box.addWidget(b2, 1)
+        layout.addLayout(box)
+
+    def setup_tab1(self, f):
+        lay = QVBoxLayout(f)
+        lay.setContentsMargins(12, 8, 12, 8)
+        lay.setSpacing(6)
+        lay.addWidget(self._section_label("规格限"))
+        self.inp_an_usl, self.inp_an_lsl = self._pair_inputs(
+            lay, ("上限 USL",), ("下限 LSL",))
+        lay.addSpacing(2)
+        mh = QWidget()
+        mhl = QHBoxLayout(mh)
+        mhl.setContentsMargins(0, 0, 0, 0)
+        mhl.setSpacing(8)
+        mhl.addWidget(self._section_label("测量数据"))
+        mhl.addWidget(self._caption_label("支持空格 / 换行 / 逗号分隔"))
+        mhl.addStretch(1)
+        lay.addWidget(mh)
+        self.txt_data = FluentTextEdit(placeholder="输入测量数据…")
+        lay.addWidget(self.txt_data, 1)
+        self.create_btn_bar(lay, self.on_analyze, self.on_clear_tab1, "开始分析")
+
+    def setup_tab2(self, f):
+        lay = QVBoxLayout(f)
+        lay.setContentsMargins(12, 8, 12, 8)
+        lay.setSpacing(6)
+        lay.addWidget(self._section_label("模拟参数"))
+        self.inp_sim_usl, self.inp_sim_lsl = self._pair_inputs(
+            lay, ("上限 USL",), ("下限 LSL",))
+        self.inp_sim_cpk, self.inp_sim_mean = self._pair_inputs(
+            lay, ("目标 Cpk", "1.33"), ("目标均值", "10.0"))
+        self.inp_sim_cnt, self.inp_sim_prec = self._pair_inputs(
+            lay, ("数量", "50"), ("小数精度", "3"))
+        self.create_btn_bar(lay, self.on_simulate, self.on_clear_tab2, "生成数据")
+        lay.addSpacing(2)
+        lay.addWidget(self._section_label("结果预览"))
+        self.txt_sim = FluentTextEdit()
+        self.txt_sim.setReadOnly(True)
+        self.txt_sim.setMinimumHeight(110)
+        lay.addWidget(self.txt_sim, 1)
+        copy_btn = FluentButton("复制结果")
+        copy_btn.setMinimumHeight(30)
+        copy_btn.clicked.connect(self.on_copy)
+        lay.addWidget(copy_btn)
+
+    def setup_tab3(self, f):
+        lay = QVBoxLayout(f)
+        lay.setContentsMargins(8, 8, 8, 8)
+        lay.setSpacing(6)
+
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        imp = FluentButton("导入 Excel", variant="accent")
+        imp.setMinimumHeight(30)
+        imp.clicked.connect(self.load_excel_file)
+        clr = FluentButton("清空列表", variant="danger")
+        clr.setMinimumHeight(30)
+        clr.clicked.connect(self.clear_excel_data)
+        hint = QLabel("点击列表项查看分析")
+        hint.setStyleSheet("color: #6E6E6E; font-size: 11px;")
+        row.addWidget(imp)
+        row.addWidget(clr)
+        row.addStretch(1)
+        row.addWidget(hint)
+        lay.addLayout(row)
+
+        self.tree_projects = FluentTreeView(headers=["项目", "子表", "Cpk", "等级"])
+        self.tree_projects.header().setStyleSheet(
+            "QHeaderView::section { background-color: #1B1B1B; color: #9D9D9D;"
+            " border: none; border-bottom: 1px solid #3B3B3B; padding: 6px 8px;"
+            " font-weight: 600; }")
+        self.tree_projects.setColumnWidth(0, 120)
+        self.tree_projects.setColumnWidth(1, 50)
+        self.tree_projects.setColumnWidth(2, 50)
+        self.tree_projects.setColumnWidth(3, 50)
+        self.tree_projects.setRootIsDecorated(False)
+        self.tree_projects.currentItemChanged.connect(
+            lambda cur, prev: self.on_excel_item_select())
+        lay.addWidget(self.tree_projects, 1)
 
     def init_stats_panel(self, parent):
-        header = tk.Frame(parent, bg=THEME['panel'])
-        header.pack(fill=tk.X, padx=14, pady=(16, 8))
+        lay = QVBoxLayout(parent)
+        lay.setContentsMargins(10, 10, 10, 10)
+        lay.setSpacing(6)
 
-        self.lbl_proj_display = tk.Label(
-            header, text="未命名项目", bg=THEME['panel'], fg=THEME['accent_text'],
-            font=(FONT_UI, 12, 'bold'), wraplength=320, justify=tk.LEFT, anchor='w'
-        )
-        self.lbl_proj_display.pack(anchor='w')
-        tk.Label(
-            header, text="详细质量指标", bg=THEME['panel'], fg=THEME['fg_dim'],
-            font=(FONT_UI, 9)
-        ).pack(anchor='w', pady=(2, 0))
+        self.lbl_proj_display = QLabel("未命名项目")
+        self.lbl_proj_display.setWordWrap(True)
+        self.lbl_proj_display.setStyleSheet(
+            "color: #4CC2FF; font-size: 14px; font-weight: 700;")
+        lay.addWidget(self.lbl_proj_display)
+        lay.addWidget(self._caption_label("详细质量指标"))
 
-        # Cpk 大号高亮
-        hero = Card(parent, pad=14)
-        hero.pack(fill=tk.X, padx=12, pady=(4, 10))
-        top = tk.Frame(hero.inner, bg=THEME['card'])
-        top.pack(fill=tk.X)
-        left = tk.Frame(top, bg=THEME['card'])
-        left.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        tk.Label(left, text="Cpk", bg=THEME['card'], fg=THEME['fg_muted'],
-                 font=(FONT_UI, 9)).pack(anchor='w')
-        self.hero_cpk = tk.Label(
-            left, text="—", bg=THEME['card'], fg=THEME['fg'],
-            font=(FONT_MONO, 28, 'bold')
-        )
-        self.hero_cpk.pack(anchor='w')
-        self.hero_level = tk.Label(
-            top, text="待分析", bg=THEME['elevated'], fg=THEME['fg_muted'],
-            font=(FONT_UI, 10, 'bold'), padx=12, pady=6
-        )
-        self.hero_level.pack(side=tk.RIGHT, anchor='n')
+        hero = QFrame()
+        hero.setObjectName("HeroCard")
+        hero.setStyleSheet(
+            f"#HeroCard {{ background-color: {C_CARD};"
+            f" border: 1px solid {C_BORDER}; border-radius: 10px; }}")
+        hl = QVBoxLayout(hero)
+        hl.setContentsMargins(14, 8, 14, 8)
+        hl.setSpacing(0)
+        l0 = QLabel("Cpk")
+        l0.setStyleSheet("color: #9D9D9D; font-size: 10px;")
+        hl.addWidget(l0)
+        hrow = QHBoxLayout()
+        self.hero_cpk = QLabel("—")
+        self.hero_cpk.setStyleSheet(
+            "color: #FFFFFF; font-size: 26px; font-weight: 700;")
+        hrow.addWidget(self.hero_cpk)
+        hrow.addStretch(1)
+        self.hero_level = QLabel("待分析")
+        self._set_hero_level_style("待分析")
+        hrow.addWidget(self.hero_level, 0, Qt.AlignmentFlag.AlignVCenter)
+        hl.addLayout(hrow)
+        lay.addWidget(hero)
 
-        # 指标网格
-        grid_wrap = tk.Frame(parent, bg=THEME['panel'])
-        grid_wrap.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 12))
-
-        self.stat_labels = {}
+        grid = QGridLayout()
+        grid.setSpacing(5)
         fields = [
             ("Count", "样本数 N"), ("Mean", "均值"),
             ("StdDev", "标准差"), ("Median", "中位数"),
@@ -800,286 +871,53 @@ class CpkApp:
             ("Cp", "Cp"), ("SigmaLevel", "Sigma水平"),
             ("PPM", "PPM"), ("OutOfSpecCount", "超规数"),
         ]
-
+        self.stat_labels = {}
         for i, (key, label) in enumerate(fields):
-            r, c = divmod(i, 2)
-            chip = MetricChip(grid_wrap, label=label, value="-")
-            chip.grid(row=r, column=c, sticky='nsew', padx=3, pady=3)
+            r, c = divmod(i, 3)
+            chip = MetricChip(label, "-")
+            grid.addWidget(chip, r, c)
             self.stat_labels[key] = chip
+        for c in range(3):
+            grid.setColumnStretch(c, 1)
+        for i in range(6):
+            grid.setRowStretch(i, 1)
+        lay.addLayout(grid)
 
-        grid_wrap.columnconfigure(0, weight=1)
-        grid_wrap.columnconfigure(1, weight=1)
-        # Cpk / CPK_LEVEL 在 hero 中展示，但仍保留映射兼容
         self.stat_labels["Cpk"] = None
         self.stat_labels["CPK_LEVEL"] = None
 
-    def update_stats_display(self, stats, project_name=None):
-        if project_name:
-            pname = project_name
-        else:
-            pname = self.inp_project.get().strip() or "未命名项目"
-
-        self.lbl_proj_display.config(text=pname)
-        if not project_name:
-            self.project_name = pname
-
-        def fmt_val(v, precision=4):
-            if v is None:
-                return "N/A"
-            return f"{v:.{precision}f}"
-
-        # Hero Cpk
-        cpk = stats.get('Cpk')
-        level = stats.get('CPK_LEVEL', '')
-        level_colors = {
-            "优秀": THEME['success'], "良好": "#a3e635",
-            "一般": THEME['warning'], "较差": "#fb923c", "很差": THEME['danger']
-        }
-        level_bgs = {
-            "优秀": THEME['success_soft'], "良好": "#243018",
-            "一般": THEME['warning_soft'], "较差": "#3a2410", "很差": THEME['danger_soft']
-        }
-        if cpk is not None:
-            self.hero_cpk.configure(text=f"{cpk:.3f}", fg=level_colors.get(level, THEME['fg']))
-            self.hero_level.configure(
-                text=level or "—",
-                fg=level_colors.get(level, THEME['fg_muted']),
-                bg=level_bgs.get(level, THEME['elevated'])
-            )
-        else:
-            self.hero_cpk.configure(text="—", fg=THEME['fg'])
-            self.hero_level.configure(text="—", fg=THEME['fg_muted'], bg=THEME['elevated'])
-
-        for key, chip in self.stat_labels.items():
-            if chip is None or key not in stats:
-                continue
-            val = stats[key]
-            color = THEME['fg']
-
-            if key in ["Count", "OutOfSpecCount"]:
-                txt = f"{int(val)}"
-                if key == "OutOfSpecCount":
-                    color = THEME['danger'] if int(val) > 0 else THEME['success']
-            elif key == "PPM":
-                txt = f"{int(val)}"
-            elif key == "SigmaLevel":
-                txt = f"{val:.2f}σ"
-            elif key == "CV":
-                txt = f"{val:.2f}%"
-            elif key in ["USL", "LSL"] and val is None:
-                txt = "未设置"
-                color = THEME['fg_dim']
-            elif key in ["Skewness", "Kurtosis"]:
-                txt = fmt_val(val, 3)
-                color = THEME['warning'] if abs(val) > 1.0 else THEME['success']
-            elif key in ['Cp', 'Cpk', 'CPU', 'CPL']:
-                txt = fmt_val(val, 3)
-            else:
-                txt = fmt_val(val, 4)
-
-            if val is None and key not in ["USL", "LSL"]:
-                color = THEME['fg_dim']
-
-            chip.set_value(txt, color)
-
-        self.set_status(f"Cpk {cpk:.3f} · {level}" if cpk is not None else "已更新", 'ok')
+    def _set_hero_level_style(self, text, fg=None, bg=None):
+        self.hero_level.setText(text)
+        self.hero_level.setStyleSheet(
+            f"color: {fg or C_FG_MUTED}; background-color: {bg or C_CARD};"
+            " border-radius: 10px; padding: 3px 10px;"
+            " font-size: 11px; font-weight: 600;")
 
     def init_chart_panel(self, parent):
-        header = tk.Frame(parent, bg=THEME['panel'])
-        header.pack(fill=tk.X, padx=16, pady=(14, 6))
-        tk.Label(
-            header, text="分布直方图", bg=THEME['panel'], fg=THEME['fg'],
-            font=(FONT_UI, 13, 'bold')
-        ).pack(side=tk.LEFT)
-        tk.Label(
-            header, text="正态拟合 · 规格限 · 均值", bg=THEME['panel'],
-            fg=THEME['fg_dim'], font=(FONT_UI, 9)
-        ).pack(side=tk.LEFT, padx=10)
+        lay = QVBoxLayout(parent)
+        lay.setContentsMargins(14, 10, 14, 10)
+        lay.setSpacing(6)
+        hrow = QHBoxLayout()
+        hrow.addWidget(self._section_label("分布直方图"))
+        hrow.addWidget(self._caption_label("正态拟合 · 规格限 · 均值"))
+        hrow.addStretch(1)
+        lay.addLayout(hrow)
+        self.hist_widget = HistogramWidget()
+        lay.addWidget(self.hist_widget, 1)
 
-        chart_box = tk.Frame(parent, bg=THEME['bg'])
-        chart_box.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+    def _current_tab_text(self):
+        return self.main_notebook.tabText(self.main_notebook.currentIndex())
 
-        self.fig, self.ax = plt.subplots(figsize=(5, 5))
-        self.fig.patch.set_facecolor(THEME['bg'])
-        self.canvas = FigureCanvasTkAgg(self.fig, master=chart_box)
-        self.canvas.get_tk_widget().configure(bg=THEME['bg'], highlightthickness=0)
-        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-        self.reset_chart()
-
-    def create_input(self, parent, label, row, default=""):
-        tk.Label(
-            parent, text=label, bg=parent.cget('bg'), fg=THEME['fg_muted'],
-            font=(FONT_UI, 9)
-        ).grid(row=row, column=0, sticky='w', pady=6)
-        wrap = tk.Frame(parent, bg=THEME['border'])
-        wrap.grid(row=row, column=1, sticky='ew', padx=(10, 0), pady=6)
-        e = tk.Entry(
-            wrap, bg=THEME['input_bg'], fg=THEME['fg'], insertbackground=THEME['accent'],
-            relief=tk.FLAT, font=(FONT_MONO, 11), bd=0
-        )
-        if default:
-            e.insert(0, default)
-        e.pack(fill=tk.X, ipady=7, padx=1, pady=1)
-        e.bind('<FocusIn>', lambda ev: wrap.configure(bg=THEME['focus']))
-        e.bind('<FocusOut>', lambda ev: wrap.configure(bg=THEME['border']))
-        return e
-
-    def setup_tab1(self, f):
-        f.configure(bg=THEME['panel'])
-        # 可滚动区域
-        canvas = tk.Canvas(f, bg=THEME['panel'], highlightthickness=0, bd=0)
-        scroll = ttk.Scrollbar(f, orient='vertical', style='Modern.Vertical.TScrollbar', command=canvas.yview)
-        inner = tk.Frame(canvas, bg=THEME['panel'])
-        inner.bind('<Configure>', lambda e: canvas.configure(scrollregion=canvas.bbox('all')))
-        canvas.create_window((0, 0), window=inner, anchor='nw')
-        canvas.configure(yscrollcommand=scroll.set)
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scroll.pack(side=tk.RIGHT, fill=tk.Y)
-
-        pad = tk.Frame(inner, bg=THEME['panel'], padx=12, pady=12)
-        pad.pack(fill=tk.BOTH, expand=True)
-        pad.columnconfigure(1, weight=1)
-
-        tk.Label(
-            pad, text="规格限", bg=THEME['panel'], fg=THEME['fg'],
-            font=(FONT_UI, 10, 'bold')
-        ).grid(row=0, column=0, columnspan=2, sticky='w', pady=(0, 4))
-        self.inp_an_usl = self.create_input(pad, "上限 USL", 1)
-        self.inp_an_lsl = self.create_input(pad, "下限 LSL", 2)
-
-        tk.Label(
-            pad, text="测量数据", bg=THEME['panel'], fg=THEME['fg'],
-            font=(FONT_UI, 10, 'bold')
-        ).grid(row=3, column=0, columnspan=2, sticky='w', pady=(14, 4))
-        tk.Label(
-            pad, text="支持空格 / 换行 / 逗号分隔", bg=THEME['panel'],
-            fg=THEME['fg_dim'], font=(FONT_UI, 8)
-        ).grid(row=4, column=0, columnspan=2, sticky='w')
-
-        text_wrap = tk.Frame(pad, bg=THEME['border'])
-        text_wrap.grid(row=5, column=0, columnspan=2, sticky='nsew', pady=(6, 0))
-        self.txt_data = tk.Text(
-            text_wrap, bg=THEME['input_bg'], fg=THEME['fg'], height=14,
-            relief=tk.FLAT, font=(FONT_MONO, 10), insertbackground=THEME['accent'],
-            bd=0, padx=8, pady=8, selectbackground=THEME['accent_soft'],
-            selectforeground=THEME['accent_text']
-        )
-        self.txt_data.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
-        pad.rowconfigure(5, weight=1)
-
-        self.create_btn_bar(pad, 6, self.on_analyze, self.on_clear_tab1, "开始分析")
-
-    def setup_tab2(self, f):
-        f.configure(bg=THEME['panel'])
-        pad = tk.Frame(f, bg=THEME['panel'], padx=12, pady=12)
-        pad.pack(fill=tk.BOTH, expand=True)
-        pad.columnconfigure(1, weight=1)
-
-        tk.Label(
-            pad, text="模拟参数", bg=THEME['panel'], fg=THEME['fg'],
-            font=(FONT_UI, 10, 'bold')
-        ).grid(row=0, column=0, columnspan=2, sticky='w', pady=(0, 4))
-
-        self.inp_sim_usl = self.create_input(pad, "上限 USL", 1)
-        self.inp_sim_lsl = self.create_input(pad, "下限 LSL", 2)
-        self.inp_sim_cpk = self.create_input(pad, "目标 Cpk", 3, "1.33")
-        self.inp_sim_mean = self.create_input(pad, "目标均值", 4, "10.0")
-        self.inp_sim_cnt = self.create_input(pad, "数量", 5, "50")
-        self.inp_sim_prec = self.create_input(pad, "小数精度", 6, "3")
-        self.create_btn_bar(pad, 7, self.on_simulate, self.on_clear_tab2, "生成数据")
-
-        tk.Label(
-            pad, text="结果预览", bg=THEME['panel'], fg=THEME['fg'],
-            font=(FONT_UI, 10, 'bold')
-        ).grid(row=8, column=0, columnspan=2, sticky='w', pady=(12, 4))
-        text_wrap = tk.Frame(pad, bg=THEME['border'])
-        text_wrap.grid(row=9, column=0, columnspan=2, sticky='nsew')
-        self.txt_sim = tk.Text(
-            text_wrap, bg=THEME['input_bg'], fg=THEME['success'], height=8,
-            relief=tk.FLAT, font=(FONT_MONO, 10), insertbackground=THEME['accent'],
-            bd=0, padx=8, pady=8
-        )
-        self.txt_sim.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
-        ModernButton(pad, text="复制结果", style='ghost', command=self.on_copy).grid(
-            row=10, column=0, columnspan=2, sticky='ew', pady=8
-        )
-
-    def setup_tab3(self, f):
-        f.configure(bg=THEME['panel'])
-        f.columnconfigure(0, weight=1)
-        # 纵向布局：项目列表在上（占大头），数据预览在下。
-        # 注意：不能用左右两列布局——预览文本框请求尺寸很大（默认 80 字符宽），
-        # grid 空间不足时会把项目列表列压成 1px，导致列表不可见、无法切换项目。
-        f.rowconfigure(1, weight=3)
-        f.rowconfigure(2, weight=2)
-
-        top = tk.Frame(f, bg=THEME['panel'])
-        top.grid(row=0, column=0, columnspan=2, sticky='ew', pady=10, padx=12)
-
-        ModernButton(top, text="导入 Excel", style='primary', command=self.load_excel_file).pack(side=tk.LEFT, padx=(0, 8))
-        ModernButton(top, text="清空列表", style='danger', command=self.clear_excel_data).pack(side=tk.LEFT)
-        tk.Label(
-            top, text="点击列表项查看分析", bg=THEME['panel'], fg=THEME['fg_dim'],
-            font=(FONT_UI, 8)
-        ).pack(side=tk.RIGHT)
-
-        list_card = Card(f, pad=0)
-        list_card.grid(row=1, column=0, columnspan=2, sticky='nsew', padx=12, pady=(0, 6))
-        list_inner = list_card.inner
-        list_inner.configure(bg=THEME['card'])
-
-        cols = ('sheet', 'cpk', 'level')
-        self.tree_projects = ttk.Treeview(
-            list_inner, columns=cols, displaycolumns=cols,
-            selectmode='browse', style='Modern.Treeview'
-        )
-        self.tree_projects.heading('#0', text='项目', anchor='w')
-        self.tree_projects.heading('sheet', text='子表', anchor='center')
-        self.tree_projects.heading('cpk', text='Cpk', anchor='center')
-        self.tree_projects.heading('level', text='等级', anchor='center')
-
-        self.tree_projects.column('#0', width=140, anchor='w')
-        self.tree_projects.column('sheet', width=70, anchor='center')
-        self.tree_projects.column('cpk', width=60, anchor='center')
-        self.tree_projects.column('level', width=60, anchor='center')
-
-        scrollbar = ttk.Scrollbar(list_inner, orient="vertical", style='Modern.Vertical.TScrollbar',
-                                  command=self.tree_projects.yview)
-        self.tree_projects.configure(yscrollcommand=scrollbar.set)
-        self.tree_projects.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=4, pady=4)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=4, padx=(0, 4))
-        self.tree_projects.bind('<<TreeviewSelect>>', self.on_excel_item_select)
-        self.tree_projects.bind('<ButtonRelease-1>', self.on_excel_item_select)
-
-        preview_card = Card(f, pad=10)
-        preview_card.grid(row=2, column=0, columnspan=2, sticky='nsew', padx=12, pady=(6, 12))
-        tk.Label(
-            preview_card.inner, text="数据预览", bg=THEME['card'], fg=THEME['fg'],
-            font=(FONT_UI, 10, 'bold')
-        ).pack(anchor='w', pady=(0, 6))
-        text_wrap = tk.Frame(preview_card.inner, bg=THEME['border'])
-        text_wrap.pack(fill=tk.BOTH, expand=True)
-        self.txt_excel_preview = tk.Text(
-            text_wrap, bg=THEME['input_bg'], fg=THEME['fg_muted'], relief=tk.FLAT,
-            font=(FONT_MONO, 9), bd=0, padx=8, pady=8, insertbackground=THEME['accent'],
-            width=1, height=1  # 请求尺寸设小，实际尺寸由 pack 拉伸决定
-        )
-        self.txt_excel_preview.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
-
-    def create_btn_bar(self, parent, row, cmd1, cmd2, lbl1):
-        box = tk.Frame(parent, bg=parent.cget('bg'))
-        box.grid(row=row, column=0, columnspan=2, sticky='ew', pady=12)
-        box.columnconfigure(0, weight=3)
-        box.columnconfigure(1, weight=1)
-        ModernButton(box, text=lbl1, style='primary', command=cmd1).grid(
-            row=0, column=0, sticky='ew', padx=(0, 6)
-        )
-        ModernButton(box, text="清空", style='ghost', command=cmd2).grid(
-            row=0, column=1, sticky='ew'
-        )
+    def on_tab_changed(self, index):
+        selected_tab = self.main_notebook.tabText(index)
+        if "Excel" in selected_tab:
+            self.btn_export.setEnabled(
+                bool(self.excel_projects) and self.current_excel_index != -1)
+        else:
+            self.btn_export.setEnabled(self.current_stats is not None)
 
     def get_val(self, entry, is_int=False, allow_empty=False):
-        val_str = entry.get().strip()
+        val_str = entry.text().strip()
         if not val_str:
             return None if allow_empty else False
         try:
@@ -1092,20 +930,20 @@ class CpkApp:
         usl = self.get_val(self.inp_an_usl, allow_empty=True)
         lsl = self.get_val(self.inp_an_lsl, allow_empty=True)
         if usl is False or lsl is False:
-            show_msg(self.root, "输入错误", "规格值必须是数字")
+            show_msg(self, "输入错误", "规格值必须是数字")
             return
         if usl is None and lsl is None:
-            show_msg(self.root, "缺失规格", "请至少输入一个规格限")
+            show_msg(self, "缺失规格", "请至少输入一个规格限")
             return
 
-        raw = self.txt_data.get("1.0", tk.END)
+        raw = self.txt_data.toPlainText()
         nums = re.findall(r"[-+]?\d*\.?\d+|\d+", raw)
         try:
             data = np.array([float(x) for x in nums])
             if len(data) < 2:
                 raise ValueError
         except Exception:
-            show_msg(self.root, "数据错误", "请检查输入数据")
+            show_msg(self, "数据错误", "请检查输入数据")
             return
 
         self.process_result(data, usl, lsl)
@@ -1118,26 +956,26 @@ class CpkApp:
         cnt = self.get_val(self.inp_sim_cnt, True)
         prec = self.get_val(self.inp_sim_prec, True)
         if any(x is False for x in [usl, lsl, cpk, mean, cnt, prec]):
-            show_msg(self.root, "输入错误", "请检查数值格式")
+            show_msg(self, "输入错误", "请检查数值格式")
             return
         if usl is None and lsl is None:
-            show_msg(self.root, "缺失规格", "请至少输入一个规格限")
+            show_msg(self, "缺失规格", "请至少输入一个规格限")
             return
 
         data = CpkCalculator.simulate(cpk, mean, usl, lsl, cnt, max(0, min(prec, 10)))
         if data is None:
-            show_msg(self.root, "错误", "无法生成数据")
+            show_msg(self, "错误", "无法生成数据")
             return
 
         fmt = f"{{:.{prec}f}}"
-        self.txt_sim.delete("1.0", tk.END)
-        self.txt_sim.insert(tk.END, "\n".join([fmt.format(x) for x in data]))
+        self.txt_sim.clear()
+        self.txt_sim.setPlainText("\n".join([fmt.format(x) for x in data]))
         self.process_result(data, usl, lsl)
 
     def process_result(self, data, usl, lsl, project_name=None):
         stats = CpkCalculator.calculate(data, usl, lsl)
         if "Error" in stats:
-            show_msg(self.root, "计算错误", stats["Error"])
+            show_msg(self, "计算错误", stats["Error"])
             self.set_status("计算失败", 'err')
             return
 
@@ -1147,149 +985,147 @@ class CpkApp:
         self.current_lsl = lsl
         self.update_stats_display(stats, project_name)
         self.draw_chart(data, stats)
-        if "Excel" not in self.main_notebook.tab('current', 'text'):
-            self.btn_export.configure(state=tk.NORMAL)
+        if "Excel" not in self._current_tab_text():
+            self.btn_export.setEnabled(True)
 
     def draw_chart(self, data, stats):
-        if not hasattr(self, '_is_exporting') or not self._is_exporting:
-            self.ax.clear()
-            self.ax.set_facecolor(THEME['bg'])
-            mu, sigma = stats['Mean'], stats['StdDev']
-            usl, lsl = stats['USL'], stats['LSL']
-
-            self.ax.hist(
-                data, bins=30, density=True, alpha=0.55,
-                color=THEME['chart_fill'], edgecolor='none'
-            )
-            xmin, xmax = self.ax.get_xlim()
-            base_span = 6 * sigma if sigma > 0 else 1.0
-            plot_min = lsl - base_span * 0.2 if lsl is not None else min(xmin, mu - 4 * sigma)
-            plot_max = usl + base_span * 0.2 if usl is not None else max(xmax, mu + 4 * sigma)
-
-            x = np.linspace(plot_min, plot_max, 500)
-            y = norm.pdf(x, mu, sigma)
-            self.ax.plot(x, y, color=THEME['chart_curve'], linewidth=2.2)
-            self.ax.fill_between(x, y, alpha=0.15, color=THEME['chart_curve'])
-
-            ymax = max(y) * 1.2 if len(y) > 0 else 1
-            self.ax.set_ylim(0, ymax)
-
-            if usl is not None:
-                self.ax.axvline(usl, c=THEME['chart_spec'], ls='--', lw=1.6)
-                self.ax.text(usl, ymax * 0.95, "USL", c=THEME['chart_spec'], ha='center', fontsize=9)
-            if lsl is not None:
-                self.ax.axvline(lsl, c=THEME['chart_spec'], ls='--', lw=1.6)
-                self.ax.text(lsl, ymax * 0.95, "LSL", c=THEME['chart_spec'], ha='center', fontsize=9)
-
-            self.ax.axvline(mu, c=THEME['chart_mean'], ls='-', lw=1.5, alpha=0.9)
-            self.ax.text(mu, ymax * 0.85, f"μ={mu:.3f}", c=THEME['chart_mean'], ha='center', fontsize=9)
-
-            self.ax.set_xlabel("测量值", fontsize=10, color=THEME['fg_muted'], labelpad=6)
-            self.ax.set_ylabel("概率密度", fontsize=10, color=THEME['fg_muted'], labelpad=6)
-            self.ax.tick_params(colors=THEME['fg_dim'], labelsize=9)
-            self.ax.grid(True, linestyle='--', alpha=0.12, color=THEME['fg_muted'])
-
-            for spine in ['top', 'right']:
-                self.ax.spines[spine].set_visible(False)
-            self.ax.spines['left'].set_color(THEME['border'])
-            self.ax.spines['bottom'].set_color(THEME['border'])
-
-            self.canvas.draw()
+        self.hist_widget.set_data(data, stats)
 
     def reset_chart(self):
-        if not hasattr(self, '_is_exporting') or not self._is_exporting:
-            self.ax.clear()
-            self.ax.set_facecolor(THEME['bg'])
-            self.ax.axis('off')
-            self.ax.text(
-                0.5, 0.5, "等待数据…\n在左侧输入测量值或导入 Excel",
-                color=THEME['fg_dim'], ha='center', va='center',
-                fontsize=12, transform=self.ax.transAxes,
-                linespacing=1.6
-            )
-            self.canvas.draw()
-            for k, chip in self.stat_labels.items():
-                if chip is not None:
-                    chip.set_value("-", THEME['fg_dim'])
-            if hasattr(self, 'hero_cpk'):
-                self.hero_cpk.configure(text="—", fg=THEME['fg'])
-                self.hero_level.configure(text="待分析", fg=THEME['fg_muted'], bg=THEME['elevated'])
-            self.lbl_proj_display.config(text="未命名项目")
-            self.current_data = None
-            self.current_stats = None
-            self.set_status("就绪", 'ok')
+        self.hist_widget.reset()
+        for chip in self.stat_labels.values():
+            if chip is not None:
+                chip.set_value("-", C_FG_DIM)
+        self.hero_cpk.setText("—")
+        self.hero_cpk.setStyleSheet(
+            "color: #FFFFFF; font-size: 26px; font-weight: 700;")
+        self._set_hero_level_style("待分析")
+        self.lbl_proj_display.setText("未命名项目")
+        self.current_data = None
+        self.current_stats = None
+        self.set_status("就绪", 'ok')
+
+    def update_stats_display(self, stats, project_name=None):
+        if project_name:
+            pname = project_name
+        else:
+            pname = self.inp_project.text().strip() or "未命名项目"
+
+        self.lbl_proj_display.setText(pname)
+        if not project_name:
+            self.project_name = pname
+
+        def fmt_val(v, precision=4):
+            if v is None:
+                return "N/A"
+            return f"{v:.{precision}f}"
+
+        cpk = stats.get('Cpk')
+        level = stats.get('CPK_LEVEL', '')
+        if cpk is not None:
+            self.hero_cpk.setText(f"{cpk:.3f}")
+            self.hero_cpk.setStyleSheet(
+                f"color: {LEVEL_COLORS.get(level, C_FG)};"
+                " font-size: 26px; font-weight: 700;")
+            self._set_hero_level_style(level or "—",
+                                       LEVEL_COLORS.get(level, C_FG_MUTED),
+                                       LEVEL_BGS.get(level, C_CARD))
+        else:
+            self.hero_cpk.setText("—")
+            self.hero_cpk.setStyleSheet(
+                "color: #FFFFFF; font-size: 26px; font-weight: 700;")
+            self._set_hero_level_style("—")
+
+        for key, chip in self.stat_labels.items():
+            if chip is None or key not in stats:
+                continue
+            val = stats[key]
+            color = C_FG
+
+            if key in ["Count", "OutOfSpecCount"]:
+                txt = f"{int(val)}"
+                if key == "OutOfSpecCount":
+                    color = C_DANGER if int(val) > 0 else C_SUCCESS
+            elif key == "PPM":
+                txt = f"{int(val)}"
+            elif key == "SigmaLevel":
+                txt = f"{val:.2f}σ"
+            elif key == "CV":
+                txt = f"{val:.2f}%"
+            elif key in ["USL", "LSL"] and val is None:
+                txt = "未设置"
+                color = C_FG_DIM
+            elif key in ["Skewness", "Kurtosis"]:
+                txt = fmt_val(val, 3)
+                color = C_WARNING if abs(val) > 1.0 else C_SUCCESS
+            elif key in ['Cp', 'Cpk', 'CPU', 'CPL']:
+                txt = fmt_val(val, 3)
+            else:
+                txt = fmt_val(val, 4)
+
+            if val is None and key not in ["USL", "LSL"]:
+                color = C_FG_DIM
+
+            chip.set_value(txt, color)
+
+        self.set_status(f"Cpk {cpk:.3f} · {level}" if cpk is not None else "已更新", 'ok')
 
     def on_clear_tab1(self):
-        self.inp_an_usl.delete(0, tk.END)
-        self.inp_an_lsl.delete(0, tk.END)
-        self.txt_data.delete("1.0", tk.END)
+        self.inp_an_usl.clear()
+        self.inp_an_lsl.clear()
+        self.txt_data.clear()
         self.reset_chart()
-        self.btn_export.configure(state=tk.DISABLED)
+        self.btn_export.setEnabled(False)
 
     def on_clear_tab2(self):
         for e in [self.inp_sim_usl, self.inp_sim_lsl, self.inp_sim_cpk,
                   self.inp_sim_mean, self.inp_sim_cnt, self.inp_sim_prec]:
-            e.delete(0, tk.END)
-        self.txt_sim.delete("1.0", tk.END)
+            e.clear()
+        self.txt_sim.clear()
         self.reset_chart()
-        self.btn_export.configure(state=tk.DISABLED)
+        self.btn_export.setEnabled(False)
 
     def on_copy(self):
-        self.root.clipboard_clear()
-        self.root.clipboard_append(self.txt_sim.get("1.0", tk.END))
-        show_msg(self.root, "复制成功", "内容已复制到剪贴板", False)
-
-    def _set_dark_titlebar(self):
-        try:
-            DWMWA_USE_IMMERSIVE_DARK_MODE = 20
-            hwnd = self.root.winfo_id()
-            ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE,
-                ctypes.byref(ctypes.c_int(1)),
-                ctypes.sizeof(ctypes.c_int(1))
-            )
-        except Exception:
-            pass
+        QGuiApplication.clipboard().setText(self.txt_sim.toPlainText())
+        show_msg(self, "复制成功", "内容已复制到剪贴板", False)
 
     def show_about(self):
         about_text = (
-            "CPK 统计分析工具 V7.4 (Modern UI)\n\n"
-            "更新内容:\n"
-            "• 现代化深色界面与卡片式布局\n"
-            "• 指标芯片、焦点反馈与状态提示\n"
-            "• 极致压缩 PDF，单页容纳约 150 条数据\n"
-            "• 导出默认路径为软件所在目录"
+            "CPK 统计分析工具 V7.4 (Fluent UI)\n\n"
+            "Copyright © 2025 Github:OUKUI All Rights Reserved."
         )
-        show_msg(self.root, "关于软件", about_text, is_error=False)
+        show_msg(self, "关于软件", about_text, is_error=False)
 
-    def _show_debug_prompt(self, event=None):
+    def _show_debug_prompt(self):
         if self._debug_tab_active:
             return
-        pwd = simpledialog.askstring("调试模式", "请输入调试密码：", show='*', parent=self.root)
+        pwd = FluentInputDialog.get_password(self, "调试模式", "请输入调试密码：")
         if pwd == "114514":
-            t2 = tk.Frame(self._notebook, bg=THEME['panel'])
-            self._notebook.insert(1, t2, text='  模拟生成  ')
+            t2 = QWidget()
+            self.main_notebook.insertTab(1, t2, "模拟生成")
             self.setup_tab2(t2)
+            self.main_notebook.setCurrentIndex(1)
             self._debug_tab_active = True
-            self._debug_btn.config(fg=THEME['success'], text="调试模式 ✓")
-            show_msg(self.root, "调试模式", "模拟生成模块已激活", is_error=False)
+            self._debug_btn.setText("调试模式 ✓")
+            self._debug_btn.setStyleSheet(
+                "color: #00B050; font-size: 11px; padding: 4px;")
+            show_msg(self, "调试模式", "模拟生成模块已激活", is_error=False)
             self.set_status("调试模式", 'info')
 
     def _toggle_debug(self, event=None):
         self._show_debug_prompt()
 
     # ==========================================
-    # 5. Excel 导入相关功能
+    # Excel 导入相关功能
     # ==========================================
     def load_excel_file(self):
         if not PANDAS_AVAILABLE:
-            show_msg(self.root, "缺少依赖", "未安装 pandas 或 openpyxl。\n请运行：pip install pandas openpyxl")
+            show_msg(self, "缺少依赖",
+                     "未安装 pandas 或 openpyxl。\n请运行：pip install pandas openpyxl")
             return
 
-        file_path = filedialog.askopenfilename(
-            title="选择 Excel 文件",
-            filetypes=[("Excel Files", "*.xlsx *.xls")]
-        )
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "选择 Excel 文件", "", "Excel Files (*.xlsx *.xls)")
         if not file_path:
             return
 
@@ -1327,7 +1163,7 @@ class CpkApp:
                     lsl = float(lsl_val) if not pd.isna(lsl_val) else None
 
                     raw_values = col_data.iloc[3:]
-                    # 严格过滤空值：NaN、空字符串、纯空格、非数值内容一律忽略
+
                     def _is_valid_numeric(v):
                         if pd.isna(v):
                             return False
@@ -1397,7 +1233,7 @@ class CpkApp:
                 msg = "未找到有效数据。"
                 if error_logs:
                     msg += "\n\n错误详情:\n" + "\n".join(error_logs[:5])
-                show_msg(self.root, "导入失败", msg)
+                show_msg(self, "导入失败", msg)
                 self.set_status("导入失败", 'err')
                 return
 
@@ -1405,8 +1241,8 @@ class CpkApp:
             self.refresh_excel_treeview()
 
             if self.excel_projects:
-                self.tree_projects.selection_set(self.tree_projects.get_children()[0])
-                self.on_excel_item_select(None)
+                self.tree_projects.setCurrentItem(self.tree_projects.topLevelItem(0))
+                self.on_excel_item_select()
 
             msg = f"成功导入 {len(self.excel_projects)} 个项目"
             if is_comparison_mode:
@@ -1414,38 +1250,36 @@ class CpkApp:
             msg += "。"
             if error_logs:
                 msg += f"\n跳过 {len(error_logs)} 个无效项目。"
-            show_msg(self.root, "导入成功", msg, is_error=False)
+            show_msg(self, "导入成功", msg, is_error=False)
             self.set_status(f"已导入 {len(self.excel_projects)} 项", 'ok')
 
         except Exception as e:
-            show_msg(self.root, "导入失败", f"读取 Excel 文件时出错:\n{str(e)}")
+            show_msg(self, "导入失败", f"读取 Excel 文件时出错:\n{str(e)}")
             self.set_status("导入失败", 'err')
 
     def refresh_excel_treeview(self):
-        for item in self.tree_projects.get_children():
-            self.tree_projects.delete(item)
-
+        self.tree_projects.clear()
         for i, proj in enumerate(self.excel_projects):
             cpk = proj['cpk_val']
             level = proj['level']
             sheet_name = proj.get('sheet_name', 'Sheet1')
-            self.tree_projects.insert(
-                '', 'end', iid=str(i), text=proj['name'],
-                values=(sheet_name, f"{cpk:.3f}", level)
-            )
+            item = QTreeWidgetItem([
+                str(proj['name']),
+                str(sheet_name),
+                f"{cpk:.3f}" if cpk is not None else "-",
+                str(level),
+            ])
+            item.setData(0, Qt.ItemDataRole.UserRole, i)
+            self.tree_projects.addTopLevelItem(item)
 
     def on_excel_item_select(self, event=None):
-        selection = self.tree_projects.selection()
-        if not selection:
+        item = self.tree_projects.currentItem()
+        if item is None:
             return
-        iid = selection[0]
-        if not iid or iid == '':
+        idx = item.data(0, Qt.ItemDataRole.UserRole)
+        if idx is None:
             return
-        try:
-            idx = int(iid)
-        except ValueError:
-            return
-
+        idx = int(idx)
         if idx < 0 or idx >= len(self.excel_projects):
             return
 
@@ -1454,62 +1288,35 @@ class CpkApp:
 
         self.update_stats_display(project['stats'], project_name=project['name'])
         self.draw_chart(project['data'], project['stats'])
+        self.root.update()
 
-        self.txt_excel_preview.delete("1.0", tk.END)
-        s = project['stats']
-        preview_text = f"【{project['name']}】详细报告\n"
-        if project.get('sheet_name'):
-            preview_text += f"子表: {project['sheet_name']}\n"
-        preview_text += "=" * 30 + "\n"
-        preview_text += f"Cpk: {s['Cpk']:.4f} ({s['CPK_LEVEL']})\n"
-        preview_text += f"USL: {s['USL']} | LSL: {s['LSL']}\n"
-        preview_text += f"均值：{s['Mean']:.4f} | 中位数：{s['Median']:.4f}\n"
-        preview_text += f"标准差：{s['StdDev']:.4f} | CV: {s['CV']:.2f}%\n"
-        preview_text += f"偏度：{s['Skewness']:.3f} | 峰度：{s['Kurtosis']:.3f}\n"
-        preview_text += f"最大：{s['Max']:.4f} | 最小：{s['Min']:.4f} | 极差：{s['Range']:.4f}\n"
-        preview_text += f"PPM: {int(s['PPM'])} | 超规数：{s['OutOfSpecCount']}\n"
-        preview_text += "=" * 30 + "\n\n数据前 30 行:\n"
-
-        for i, val in enumerate(project['data'][:30]):
-            preview_text += f"{val}\n"
-        if len(project['data']) > 30:
-            preview_text += f"... 共 {len(project['data'])} 条数据"
-
-        self.txt_excel_preview.insert("1.0", preview_text)
-        self.root.update_idletasks()
-
-        if "Excel" in self.main_notebook.tab('current', 'text'):
-            self.btn_export.configure(state=tk.NORMAL)
+        if "Excel" in self._current_tab_text():
+            self.btn_export.setEnabled(True)
 
     def clear_excel_data(self):
         self.excel_projects = []
         self.current_excel_index = -1
-        for item in self.tree_projects.get_children():
-            self.tree_projects.delete(item)
-        self.txt_excel_preview.delete("1.0", tk.END)
+        self.tree_projects.clear()
         self.reset_chart()
-        if "Excel" in self.main_notebook.tab('current', 'text'):
-            self.btn_export.configure(state=tk.DISABLED)
+        if "Excel" in self._current_tab_text():
+            self.btn_export.setEnabled(False)
         self.set_status("列表已清空", 'info')
 
     def export_merged_report(self):
         if not self.excel_projects:
-            show_msg(self.root, "无数据", "没有可导出的项目数据。请先导入 Excel。")
+            show_msg(self, "无数据", "没有可导出的项目数据。请先导入 Excel。")
             return
 
         if not REPORTLAB_AVAILABLE:
-            show_msg(self.root, "缺少依赖", "未安装 reportlab。")
+            show_msg(self, "缺少依赖", "未安装 reportlab。")
             return
 
         default_filename = f"CPK_汇总报告_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
 
-        file_path = filedialog.asksaveasfilename(
-            title="保存汇总报告 (所有项目将合并为此文件)",
-            defaultextension=".pdf",
-            initialfile=default_filename,
-            filetypes=[("PDF 文件", "*.pdf"), ("所有文件", "*.*")],
-            initialdir=self.app_dir
-        )
+        default_path = os.path.join(self.app_dir, default_filename)
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "保存汇总报告 (所有项目将合并为此文件)",
+            default_path, "PDF 文件 (*.pdf);;所有文件 (*.*)")
 
         if not file_path:
             return
@@ -1517,29 +1324,32 @@ class CpkApp:
             file_path += '.pdf'
 
         try:
-            self.btn_batch_export.configure(state=tk.DISABLED, text="生成中...")
+            self.btn_batch_export.setEnabled(False)
+            self.btn_batch_export.setText("生成中...")
             self.set_status("导出中…", 'info')
-            self.root.update_idletasks()
+            QApplication.processEvents()
 
             self._generate_merged_pdf_report(file_path, self.excel_projects)
 
-            show_msg(self.root, "导出成功", f"所有 {len(self.excel_projects)} 个项目已合并保存至:\n{file_path}", is_error=False)
+            show_msg(self, "导出成功",
+                     f"所有 {len(self.excel_projects)} 个项目已合并保存至:\n{file_path}",
+                     is_error=False)
             self.set_status("导出完成", 'ok')
         except Exception as e:
-            show_msg(self.root, "导出失败", f"错误:\n{str(e)}\n{traceback.format_exc()}")
+            show_msg(self, "导出失败", f"错误:\n{str(e)}\n{traceback.format_exc()}")
             self.set_status("导出失败", 'err')
         finally:
-            self.btn_batch_export.configure(state=tk.NORMAL, text="合并导出全部 PDF")
+            self.btn_batch_export.setEnabled(True)
+            self.btn_batch_export.setText("合并全部 PDF")
 
     def export_report(self):
         if not REPORTLAB_AVAILABLE:
-            show_msg(self.root, "缺少依赖", "未安装 reportlab。")
+            show_msg(self, "缺少依赖", "未安装 reportlab。")
             return
 
-        current_tab_text = self.main_notebook.tab('current', 'text')
-        if "Excel" in current_tab_text:
+        if "Excel" in self._current_tab_text():
             if not self.excel_projects or self.current_excel_index == -1:
-                show_msg(self.root, "无数据", "请先在列表中选择一个项目。")
+                show_msg(self, "无数据", "请先在列表中选择一个项目。")
                 return
             project = self.excel_projects[self.current_excel_index]
             data_to_export = project['data']
@@ -1548,7 +1358,7 @@ class CpkApp:
             lsl_to_export = project['lsl']
             name_to_export = project['name']
         elif self.current_stats is None:
-            show_msg(self.root, "无数据", "请先进行分析或模拟生成数据。")
+            show_msg(self, "无数据", "请先进行分析或模拟生成数据。")
             return
         else:
             data_to_export = self.current_data
@@ -1561,13 +1371,10 @@ class CpkApp:
         safe_name = safe_name[:50]
         default_filename = f"CPK_{safe_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
 
-        file_path = filedialog.asksaveasfilename(
-            title="保存 CPK 报告",
-            defaultextension=".pdf",
-            initialfile=default_filename,
-            filetypes=[("PDF 文件", "*.pdf"), ("所有文件", "*.*")],
-            initialdir=self.app_dir
-        )
+        default_path = os.path.join(self.app_dir, default_filename)
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "保存 CPK 报告",
+            default_path, "PDF 文件 (*.pdf);;所有文件 (*.*)")
 
         if not file_path:
             return
@@ -1596,10 +1403,10 @@ class CpkApp:
             self.current_lsl = old_lsl
             self.project_name = old_name
 
-            show_msg(self.root, "导出成功", f"报告已保存至:\n{file_path}", is_error=False)
+            show_msg(self, "导出成功", f"报告已保存至:\n{file_path}", is_error=False)
             self.set_status("导出完成", 'ok')
         except Exception as e:
-            show_msg(self.root, "导出失败", f"错误:\n{str(e)}\n{traceback.format_exc()}")
+            show_msg(self, "导出失败", f"错误:\n{str(e)}\n{traceback.format_exc()}")
             self.set_status("导出失败", 'err')
 
     def _get_pdf_font(self):
@@ -1625,14 +1432,12 @@ class CpkApp:
             gap_h = 0.30 * cm
             half_h = (usable_h - gap_h) / 2.0
 
-            # 目录页：整页单 Frame
             frame_full = Frame(
                 page_margin, page_margin, usable_w, usable_h,
                 id='full',
                 leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0,
                 showBoundary=0,
             )
-            # 详情页：上/下两个固定半页 Frame —— 保证一页两项、互不侵占
             frame_top = Frame(
                 page_margin, page_margin + half_h + gap_h, usable_w, half_h,
                 id='top',
@@ -1676,7 +1481,6 @@ class CpkApp:
                 textColor=colors.HexColor('#1e40af'), leading=12
             )
 
-            # ---- 目录页 ----
             toc_level_colors = {
                 '优秀': '#2563eb', '良好': '#16a34a', '一般': '#ca8a04',
                 '较差': '#dc2626', '很差': '#dc2626'
@@ -1715,7 +1519,6 @@ class CpkApp:
                 ('FONTNAME', (0, 0), (-1, 0), font_name),
             ]))
 
-            # ---- 判定标准脚标（页面最底部）----
             foot_style = ParagraphStyle(
                 'Footnote', fontName=font_name, fontSize=7, leading=10,
                 textColor=colors.HexColor('#64748b'), alignment=TA_CENTER
@@ -1728,7 +1531,6 @@ class CpkApp:
                 f"<font color='#dc2626'><b>较差</b></font>(0.67≤Cpk<1.00)  "
                 f"<font color='black'><b>很差</b></font>(Cpk<0.67)"
             )
-            # 目录内容与脚标打包，脚标固定在页面底部
             toc_inner = Table([
                 [Paragraph("CPK 过程能力汇总分析报告", title_style)],
                 [Paragraph(f"时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}  |  项目数：{len(projects_list)}", sub_style)],
@@ -1757,7 +1559,6 @@ class CpkApp:
             ]))
             story.append(toc_page)
 
-            # ---- 详情页：切换到双 Frame 模板 ----
             story.append(NextPageTemplate('two_up'))
             story.append(PageBreak())
 
@@ -1773,8 +1574,6 @@ class CpkApp:
                 )
                 story.append(card)
 
-                # 偶数项（0-based 奇数）在底部 Frame；之后若还有项目则换页
-                # 奇数项（0-based 偶数）在顶部 Frame；用 FrameBreak 进入下半页
                 if i < n_proj - 1:
                     if i % 2 == 0:
                         story.append(FrameBreak())
@@ -1791,17 +1590,6 @@ class CpkApp:
                         pass
 
     def _build_batch_project_card(self, proj, index, font_name, card_w, card_h, temp_img_paths):
-        """
-        构建单个项目卡片（半页）。
-        布局：
-          ┌─ 标题栏（项目名 + Cpk 徽章）─────────────────┐
-          │  指标条（两行 8 格）                           │
-          │  ┌─ 直方图 ──────┬─ 原始数据 ──────────────┐ │
-          │  │               │                          │ │
-          │  └───────────────┴──────────────────────────┘ │
-          └──────────────────────────────────────────────┘
-        内容按 card_h 预算尺寸，再包一层 KeepInFrame 兜底，避免溢出重叠。
-        """
         s = proj['stats']
         data = proj['data']
         self.current_data = data
@@ -1823,7 +1611,6 @@ class CpkApp:
             '较差': '#dc2626', '很差': '#dc2626'
         }.get(level, '#334155')
 
-        # 唯一样式名，避免 reportlab 样式缓存冲突
         uid = f"p{index}"
         sty_title = ParagraphStyle(
             f'BT_{uid}', fontName=font_name, fontSize=11, leading=14,
@@ -1850,26 +1637,21 @@ class CpkApp:
             textColor=colors.HexColor('#94a3b8'), alignment=TA_CENTER
         )
 
-        # ---- 高度预算（pt）----
-        # 外层 Table 的 padding 会吃掉 2*pad，内部元素之和必须 ≤ card_h - 2*pad
         pad = 5
         header_h = 20
         sec_label_h = 11
         spacer_after_header = 3
-        # 可用内容高度（扣除卡片上下内边距）
         content_budget = card_h - 2 * pad
         body_h = content_budget - header_h - spacer_after_header
         if body_h < 100:
             body_h = 100
 
-        # 左右分栏：左图约 58%，右数据约 42%（图片横向拉伸）
         gutter = 6
         left_w = card_w * 0.58 - gutter / 2
         right_w = card_w * 0.42 - gutter / 2
         metrics_detail_h = 76
         chart_h = body_h - sec_label_h - metrics_detail_h - 4
 
-        # ---- 1) 标题栏 ----
         sheet_info = f"  ·  {proj.get('sheet_name', '')}" if proj.get('sheet_name') else ""
         name_txt = str(proj.get('name', '未命名'))
         if len(name_txt) > 28:
@@ -1899,7 +1681,6 @@ class CpkApp:
             ('BOX', (0, 0), (-1, -1), 0.4, colors.HexColor('#93c5fd')),
         ]))
 
-        # ---- 2) 质量指标详表（位于图片上方）----
         def metric_pair(label, value, val_color=None):
             vc = val_color or 'black'
             return Paragraph(
@@ -1948,7 +1729,6 @@ class CpkApp:
             ('RIGHTPADDING', (0, 0), (-1, -1), 1),
         ]))
 
-        # ---- 4) 直方图 ----
         img_path = self._create_temp_chart_image(size='half')
         temp_img_paths.append(img_path)
         chart_img = Image(img_path, width=left_w - 2, height=chart_h - 2)
@@ -1975,7 +1755,6 @@ class CpkApp:
             ('BOX', (0, 2), (0, 2), 0.3, colors.HexColor('#e2e8f0')),
         ]))
 
-        # ---- 5) 原始数据表：最多 30 行 × 5 列 ----
         data_row_h = 8.5
         data_font = 5.8
         data_cols = 5
@@ -2018,7 +1797,6 @@ class CpkApp:
             ('LINEAFTER', (0, 0), (0, 0), 0.5, colors.HexColor('#cbd5e1')),
         ]))
 
-        # ---- 组装卡片 ----
         card_inner = Table(
             [
                 [header_tbl],
@@ -2050,14 +1828,13 @@ class CpkApp:
             ('BOTTOMPADDING', (0, 0), (-1, -1), pad),
         ]))
 
-        # KeepInFrame 兜底：内容已按预算设计，正常不会 shrink；异常时缩小而非溢出重叠
         return KeepInFrame(
             card_w, card_h, [card_outer],
             mode='shrink', hAlign='LEFT', vAlign='TOP'
         )
 
     def _create_compact_data_table(self, data, font_name, width, max_count=120, cols=10,
-                                  max_rows=None, row_height=9.2, font_size=6.0):
+                                   max_rows=None, row_height=9.2, font_size=6.0):
         """紧凑实测数据表。固定行高；优先按 max_rows 限制，避免撑破半页布局。"""
         d_list = data.tolist() if isinstance(data, np.ndarray) else list(data)
         if max_rows is not None:
@@ -2086,7 +1863,6 @@ class CpkApp:
 
         n_rows = len(rows_data)
         col_w = width / cols
-        # 行高至少能容纳字号 + 上下内边距，防止文字裁切/叠字
         safe_row_h = max(float(row_height), float(font_size) + 5.0)
         row_heights = [safe_row_h] * n_rows
 
@@ -2273,7 +2049,6 @@ class CpkApp:
     def _create_temp_chart_image(self, compact=False, size=None):
         """生成直方图。size='half' 用于批量导出半页布局。"""
         if size == 'half':
-            # 横向拉伸，适配左栏宽比例
             w, h = 6.8, 2.4
             dpi = 180
             title_fs, label_fs, tick_fs = 9, 7, 6
@@ -2323,7 +2098,6 @@ class CpkApp:
         ymax = max(y) * 1.18 if len(y) > 0 else 1
         ax.set_ylim(0, ymax)
 
-        # 规格线标签错开高度，避免 USL/LSL 重叠
         if usl is not None:
             ax.axvline(usl, c='#ef4444', ls='--', lw=1.4)
             ax.text(usl, ymax * 0.96, "USL", c='#ef4444', ha='center',
@@ -2362,7 +2136,6 @@ class CpkApp:
         with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
             temp_img_path = tmp_file.name
 
-        # half 模式不用 bbox_inches='tight'，保持画布比例稳定，避免 PDF 内再变形
         if size == 'half':
             fig.savefig(temp_img_path, dpi=dpi, facecolor='white')
         else:
@@ -2425,6 +2198,9 @@ class CpkApp:
 
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = CpkApp(root)
-    root.mainloop()
+    app = FluentApp()
+    apply_theme(QApplication.instance())
+    win = CpkApp()
+    win.show()
+    win._set_dark_titlebar()
+    sys.exit(app.exec())
